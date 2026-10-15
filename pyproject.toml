@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agytask"
+version = "0.1.0"
+description = "Antigravity CLI Task Runner - أداة سطر أوامر وحزمة بايثون لأتمتة وتنفيذ مهام Antigravity"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "Developer"}
+]
+keywords = ["antigravity", "cli", "task-runner", "automation", "ai"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Build Tools",
+]
+dependencies = [
+    "click>=8.0.0",
+]
+
+[project.scripts]
+agytask = "agytask.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["agytask*"]
