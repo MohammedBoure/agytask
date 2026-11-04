@@ -37,7 +37,14 @@ def clean_to_absolute_path(raw_input: Union[str, Path]) -> Path:
 
 def parse_tasks_file(file_path: Union[str, Path]) -> Tuple[List[Task], List[str]]:
     """
-    قراءة وتحليل ملف المهام (Markdown) واستخراج المهام المعلقة والمكتملة.
+    قراءة وتحليل ملف المهام (Markdown) واستخراج المهام المعلقة والمكتملة بدقة.
+    يدعم مختلف صيغ الترويسات مثل:
+      # 1 [PENDING]: medium
+      # 1 [COMPLETED]: medium
+      # 1: high
+      # 1: medium [COMPLETED]
+      # 1: low [مكتملة]
+      # 1
 
     Args:
         file_path: مسار ملف المهام.
@@ -55,24 +62,27 @@ def parse_tasks_file(file_path: Union[str, Path]) -> Tuple[List[Task], List[str]
     with open(path, "r", encoding="utf-8") as f:
         content = f.read()
 
-    # التعبير النمطي يلتقط رقم المهمة، الجهد، وما إذا كان هناك وسم اكتمال (COMPLETED أو مكتملة)
-    pattern = r"^#\s*(\d+)\s*(?::\s*([a-zA-Z]+)?)?(?:\s*\[(COMPLETED|مكتملة)\])?"
+    # التعبير النمطي الشامل للترويسات
+    pattern = r"^#\s*(\d+)(?:[ \t]+\[(PENDING|COMPLETED|مكتملة)\])?(?:\s*:\s*([a-zA-Z]+))?(?:[ \t]+\[(PENDING|COMPLETED|مكتملة)\])?"
     sections = re.split(pattern, content, flags=re.MULTILINE)
 
     tasks: List[Task] = []
     skipped_tasks: List[str] = []
 
-    # re.split تنتج: [ما قبل أول تطابق، رقم، جهد، حالة الاكتمال، المحتوى، رقم، ...]
-    for i in range(1, len(sections), 4):
+    # re.split تنتج مجموعات: [نص_سابق, رقم, حالة1, جهد, حالة2, محتوى, رقم, ...]
+    # الخطوة 5 لكل تطابق
+    for i in range(1, len(sections), 5):
         task_id = sections[i].strip()
-        effort_raw = sections[i + 1]
-        status = sections[i + 2]
-        body = sections[i + 3].strip() if (i + 3) < len(sections) else ""
+        st1 = sections[i + 1]
+        effort_raw = sections[i + 2]
+        st2 = sections[i + 3]
+        body = sections[i + 4].strip() if (i + 4) < len(sections) else ""
 
+        status = (st1 or st2 or "").upper()
         effort = (effort_raw if effort_raw else "medium").strip().lower()
 
         # التحقق مما إذا كانت المهمة مكتملة مسبقاً
-        if status:
+        if status in ("COMPLETED", "مكتملة"):
             skipped_tasks.append(task_id)
             continue
 
@@ -88,7 +98,7 @@ def parse_tasks_file(file_path: Union[str, Path]) -> Tuple[List[Task], List[str]
 
 def mark_task_as_completed(file_path: Union[str, Path], task_id: str) -> bool:
     """
-    تحديث ترويسة المهمة في الملف وإضافة [COMPLETED] أمامها مباشرة وبأمان.
+    تحديث ترويسة المهمة في الملف وإضافة أو استبدال [COMPLETED] بأمان تام.
 
     Args:
         file_path: مسار ملف المهام المراد تعديله.
@@ -104,13 +114,14 @@ def mark_task_as_completed(file_path: Union[str, Path], task_id: str) -> bool:
     with open(path, "r", encoding="utf-8") as f:
         content = f.read()
 
-    # استبدال سطر عنوان المهمة لإضافة وسم الاكتمال إذا لم يكن موجوداً
-    pattern = rf"^(#\s*{re.escape(str(task_id))}(?:\s*:\s*[a-zA-Z]+)?)(?!.*\[COMPLETED\])"
+    # الحالة الأولى: استبدال [PENDING] بـ [COMPLETED]
+    p_pending = rf"^(#\s*{re.escape(str(task_id))}[^\n]*?)\[PENDING\]"
+    updated_content, count = re.subn(p_pending, r"\1[COMPLETED]", content, count=1, flags=re.MULTILINE | re.IGNORECASE)
 
-    def replacer(match: re.Match) -> str:
-        return f"{match.group(1)} [COMPLETED]"
-
-    updated_content, count = re.subn(pattern, replacer, content, count=1, flags=re.MULTILINE)
+    # الحالة الثانية: إذا لم تكن تحتوي على [PENDING] وليست مكتملة بعد، نضيف [COMPLETED]
+    if count == 0:
+        p_append = rf"^(#\s*{re.escape(str(task_id))}(?:\s*:[^\n]*)?)(?!.*\[COMPLETED\])$"
+        updated_content, count = re.subn(p_append, r"\1 [COMPLETED]", content, count=1, flags=re.MULTILINE)
 
     if count > 0:
         # الكتابة الآمنة عبر ملف مؤقت لتفادي تلف البيانات أثناء المقاطعة المفاجئة

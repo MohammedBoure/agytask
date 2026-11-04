@@ -5,6 +5,8 @@ ui.py - واجهة مستخدم رسومية احترافية مبنية بـ Tk
 import os
 import sys
 import uuid
+import shutil
+import datetime
 import subprocess
 from pathlib import Path
 from typing import Optional, List
@@ -22,8 +24,8 @@ class AntigravityTaskRunnerUI:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("Antigravity Task Runner - مُشغّل المهام التفاعلي (agy -i)")
-        self.root.geometry("900x720")
-        self.root.minsize(800, 620)
+        self.root.geometry("960x780")
+        self.root.minsize(850, 680)
 
         # المتغيرات المرتبطة بعناصر التحكم
         self.project_dir_var = tk.StringVar(value=os.getcwd())
@@ -41,16 +43,22 @@ class AntigravityTaskRunnerUI:
         self.pending_tasks: List[Task] = []
         self.completed_task_ids: List[str] = []
 
-        # محاولة البحث عن TASKS.md في المجلد الحالي افتراضياً
-        default_tasks = Path(self.project_dir_var.get()) / "TASKS.md"
-        if default_tasks.is_file():
-            self.tasks_file_var.set(str(default_tasks))
-        else:
+        # محاولة البحث عن TASKS.md أو tasks.md في المجلد الحالي افتراضياً
+        cur_dir = Path(self.project_dir_var.get())
+        for candidate_name in ("TASKS.md", "tasks.md", "docs/tasks.md", "docs/TASKS.md"):
+            cand = cur_dir / candidate_name
+            if cand.is_file():
+                self.tasks_file_var.set(str(cand))
+                break
+        if not self.tasks_file_var.get():
             self.tasks_file_var.set("TASKS.md")
 
         self._configure_styles()
         self._build_ui()
         self._reload_tasks()
+
+        # إضافة رسالة ترحيبية في سجل النشاط
+        self._log_message("مرحباً بك في Antigravity Task Runner. حدد مسارات العمل واضغط على بدء التشغيل.")
 
         # بدء عملية الاستطلاع الدوري لتحديث حالة المهام تلقائياً عند تعديل الملف
         self.root.after(2000, self._auto_poll_tasks)
@@ -63,7 +71,6 @@ class AntigravityTaskRunnerUI:
         except Exception:
             pass
 
-        # تخصيص الألوان العامة
         self.root.configure(bg="#f8fafc")
 
         style.configure("TFrame", background="#f8fafc")
@@ -111,11 +118,11 @@ class AntigravityTaskRunnerUI:
             background=[("active", "#15803d")]
         )
 
-        # تخصيص الجدول Treeview
+        # تخصيص جدول المهام Treeview
         style.configure(
             "Treeview",
             font=("Segoe UI", 9),
-            rowheight=26,
+            rowheight=28,
             background="#ffffff",
             fieldbackground="#ffffff"
         )
@@ -132,7 +139,7 @@ class AntigravityTaskRunnerUI:
 
         title_label = tk.Label(
             header_frame,
-            text="⚡ Antigravity Task Runner - مُشغّل المهام التفاعلي",
+            text="⚡ Antigravity Task Runner - مُشغّل المهام التفاعلي (agy -i)",
             font=("Segoe UI", 14, "bold"),
             bg="#f8fafc",
             fg="#0f172a"
@@ -141,7 +148,7 @@ class AntigravityTaskRunnerUI:
 
         subtitle_label = tk.Label(
             header_frame,
-            text="تشغيل مهام Markdown تسلسلياً والمشاهدة الحية عبر واجهة agy -i التفاعلية",
+            text="تشغيل مهام Markdown تسلسلياً مع فتح نافذة طرفية مستقلة لمشاهدة الوكيل حياً عبر agy -i",
             font=("Segoe UI", 9),
             bg="#f8fafc",
             fg="#64748b"
@@ -222,7 +229,7 @@ class AntigravityTaskRunnerUI:
         )
         engine_combo.grid(row=1, column=5, sticky="ew", pady=4)
 
-        # السطر الثالث: خيارات التأكيد وتخطي الأذونات
+        # السطر الثالث: خيارات الأمان والمتابعة التلقائية
         options_frame = ttk.Frame(settings_frame)
         options_frame.grid(row=2, column=0, columnspan=6, sticky="w", pady=(6, 0))
         ttk.Checkbutton(
@@ -239,7 +246,7 @@ class AntigravityTaskRunnerUI:
 
         # 4. قسم استعراض المهام (Tasks Preview Table)
         tasks_group = ttk.LabelFrame(main_container, text=" قائمة المهام المستخرجة (Tasks List) ", padding="10")
-        tasks_group.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        tasks_group.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
 
         # جدول Treeview مع شريط تمرير
         table_container = ttk.Frame(tasks_group)
@@ -250,16 +257,15 @@ class AntigravityTaskRunnerUI:
         self.tree.heading("id", text="المهمة (#)")
         self.tree.heading("effort", text="الجهد")
         self.tree.heading("status", text="الحالة")
-        self.tree.heading("preview", text="معاينة محتوى المهمة")
+        self.tree.heading("preview", text="نص المهمة المطلوب تنفيذها")
 
         self.tree.column("id", width=80, anchor="center")
-        self.tree.column("effort", width=100, anchor="center")
-        self.tree.column("status", width=130, anchor="center")
-        self.tree.column("preview", width=520, anchor="w")
+        self.tree.column("effort", width=95, anchor="center")
+        self.tree.column("status", width=140, anchor="center")
+        self.tree.column("preview", width=580, anchor="w")
 
-        # تنسيق ألوان أسطر المهام المكتملة والمعلقة
-        self.tree.tag_configure("completed", foreground="#16a34a")
-        self.tree.tag_configure("pending", foreground="#1e293b")
+        self.tree.tag_configure("completed", foreground="#16a34a", background="#f0fdf4")
+        self.tree.tag_configure("pending", foreground="#0f172a", background="#ffffff")
 
         scrollbar = ttk.Scrollbar(table_container, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
@@ -286,14 +292,14 @@ class AntigravityTaskRunnerUI:
             style="Secondary.TButton"
         ).pack(side=tk.RIGHT)
 
-        # 5. شريط الأزرار الرئيسية (Action Buttons)
+        # 5. شريط أزرار التشغيل والتحكم (Action Buttons)
         actions_frame = ttk.Frame(main_container)
-        actions_frame.pack(fill=tk.X, pady=(4, 0))
+        actions_frame.pack(fill=tk.X, pady=(4, 8))
 
-        # الزر الرئيسي: تشغيل حي في agy -i
+        # الزر الرئيسي: إطلاق طرفية agy -i التفاعلية الحية
         run_all_btn = ttk.Button(
             actions_frame,
-            text="▶ بدء تشغيل المهام التفاعلية (agy -i)",
+            text="▶ (agy -i) بدء تشغيل المهام التفاعلية",
             command=self._start_all_tasks_interactive,
             style="Primary.TButton"
         )
@@ -326,6 +332,34 @@ class AntigravityTaskRunnerUI:
         )
         close_btn.pack(side=tk.RIGHT)
 
+        # 6. قسم سجل النشاط والمتابعة الحية داخل الواجهة (Live Activity Log)
+        log_group = ttk.LabelFrame(main_container, text=" سجل النشاط ومتابعة التنفيذ (Live Log) ", padding="6")
+        log_group.pack(fill=tk.X, pady=(0, 0))
+
+        log_container = ttk.Frame(log_group)
+        log_container.pack(fill=tk.BOTH, expand=True)
+
+        self.log_text = tk.Text(
+            log_container,
+            height=4,
+            bg="#0f172a",
+            fg="#38bdf8",
+            insertbackground="#ffffff",
+            font=("Consolas", 9),
+            wrap=tk.WORD
+        )
+        log_scrollbar = ttk.Scrollbar(log_container, orient=tk.VERTICAL, command=self.log_text.yview)
+        self.log_text.configure(yscrollcommand=log_scrollbar.set)
+
+        self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        log_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+    def _log_message(self, msg: str) -> None:
+        """إضافة سطر جديد إلى سجل النشاط المباشر."""
+        now_str = datetime.datetime.now().strftime("%H:%M:%S")
+        self.log_text.insert(tk.END, f"[{now_str}] {msg}\n")
+        self.log_text.see(tk.END)
+
     def _browse_project_dir(self) -> None:
         """اختيار مجلد المشروع عبر نافذة التصفح."""
         chosen = filedialog.askdirectory(
@@ -334,10 +368,17 @@ class AntigravityTaskRunnerUI:
         )
         if chosen:
             self.project_dir_var.set(chosen)
-            # فحص تلقائي لملف TASKS.md داخل المجلد الجديد
-            candidate = Path(chosen) / "TASKS.md"
-            if candidate.is_file():
-                self.tasks_file_var.set(str(candidate))
+            # فحص تلقائي لملفات المهام داخل المجلد الجديد
+            cand_paths = [
+                Path(chosen) / "TASKS.md",
+                Path(chosen) / "tasks.md",
+                Path(chosen) / "docs" / "tasks.md",
+                Path(chosen) / "docs" / "TASKS.md",
+            ]
+            for cand in cand_paths:
+                if cand.is_file():
+                    self.tasks_file_var.set(str(cand))
+                    break
             self._reload_tasks()
 
     def _browse_tasks_file(self) -> None:
@@ -360,6 +401,7 @@ class AntigravityTaskRunnerUI:
         """توليد معرف جلسة فريد جديد."""
         new_session = f"agy-session-{uuid.uuid4().hex[:10]}"
         self.session_id_var.set(new_session)
+        self._log_message(f"تم توليد معرف جلسة جديد: {new_session}")
 
     def _resolve_paths(self) -> tuple[Optional[Path], Optional[Path]]:
         """التحقق من المسارات وإرجاع كائنات Path صالحة."""
@@ -404,7 +446,7 @@ class AntigravityTaskRunnerUI:
             # إضافة المهام المعلقة
             for t in pending:
                 first_line = t["content"].splitlines()[0] if t["content"] else ""
-                preview = first_line[:90] + ("..." if len(first_line) > 90 else "")
+                preview = first_line[:95] + ("..." if len(first_line) > 95 else "")
                 self.tree.insert(
                     "",
                     tk.END,
@@ -424,12 +466,12 @@ class AntigravityTaskRunnerUI:
                 )
 
             total = len(pending) + len(skipped)
-            self.status_summary_var.set(
-                f"📊 إجمالي المهام: {total}  |  ⏳ قيد الانتظار: {len(pending)}  |  ✔ مكتملة: {len(skipped)}"
-            )
+            summary_msg = f"📊 إجمالي المهام: {total}  |  ⏳ قيد الانتظار: {len(pending)}  |  ✔ مكتملة: {len(skipped)}"
+            self.status_summary_var.set(summary_msg)
 
         except Exception as err:
             self.status_summary_var.set(f"❌ خطأ أثناء تحليل ملف المهام: {err}")
+            self._log_message(f"خطأ في تحليل ملف المهام: {err}")
 
     def _auto_poll_tasks(self) -> None:
         """استطلاع دوري للملف لتحديث الجدول تلقائياً إذا تغير الملف في الخلفية."""
@@ -438,6 +480,7 @@ class AntigravityTaskRunnerUI:
             try:
                 current_mtime = tasks_path.stat().st_mtime
                 if current_mtime != self.last_tasks_mtime:
+                    self._log_message(f"تم رصد تحديث في ملف المهام ({tasks_path.name})، جاري تحديث الجدول...")
                     self._reload_tasks()
             except Exception:
                 pass
@@ -445,7 +488,9 @@ class AntigravityTaskRunnerUI:
         self.root.after(2000, self._auto_poll_tasks)
 
     def _launch_worker_process(self, specific_task_id: Optional[str] = None) -> None:
-        """إطلاق معالج المهام التفاعلي في نافذة طرفية مستقلة لعرض agy -i حياً."""
+        """
+        إطلاق معالج المهام التفاعلي في نافذة طرفية مستقلة وظاهرة في المقدمة لعرض agy -i حياً.
+        """
         proj_path, tasks_path = self._resolve_paths()
 
         if not proj_path or not proj_path.is_dir():
@@ -462,42 +507,74 @@ class AntigravityTaskRunnerUI:
         effort = self.effort_var.get().strip() or "from-task"
         skip_perm = self.skip_permissions_var.get()
         auto_next = self.auto_next_var.get()
-        engine = self.exec_engine_var.get()
 
-        # بناء أمر إطلاق العامل التفاعلي
-        cmd = [
-            sys.executable,
+        target_desc = f"المهمة #{specific_task_id}" if specific_task_id else "جميع المهام المعلقة"
+
+        # بناء معاملات تشغيل سكربت العامل التفاعلي
+        worker_args = [
+            f'"{sys.executable}"',
             "-m", "agytask.interactive_worker",
-            "--project-dir", str(proj_path),
-            "--tasks-file", str(tasks_path),
-            "--session", session_id,
-            "--model", model,
-            "--mode", mode,
-            "--effort", effort,
+            "--project-dir", f'"{proj_path}"',
+            "--tasks-file", f'"{tasks_path}"',
+            "--session", f'"{session_id}"',
+            "--model", f'"{model}"',
+            "--mode", f'"{mode}"',
+            "--effort", f'"{effort}"',
         ]
 
         if skip_perm:
-            cmd.append("--dangerously-skip-permissions")
+            worker_args.append("--dangerously-skip-permissions")
 
         if not auto_next:
-            cmd.append("--no-auto-next")
+            worker_args.append("--no-auto-next")
 
         if specific_task_id:
-            cmd.extend(["--task-id", str(specific_task_id)])
-
-        # إطلاق نافذة طرفية جديدة حية ومستقلة على نظام ويندوز
-        creationflags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
+            worker_args.extend(["--task-id", f'"{specific_task_id}"'])
 
         try:
-            subprocess.Popen(
-                cmd,
-                cwd=str(proj_path),
-                creationflags=creationflags
-            )
-            target_desc = f"المهمة #{specific_task_id}" if specific_task_id else "جميع المهام المعلقة"
-            self.status_summary_var.set(f"🚀 تم إطلاق نافذة الطرفية الحية لـ {target_desc} عبر agy -i.")
+            if sys.platform == "win32":
+                # استخدام start cmd.exe /k لضمان فتح نافذة طرفية Command Prompt مستقلة ومرئية في المقدمة وبقائها مفتوحة
+                win_title = f"Antigravity Live Runner - {target_desc} [{session_id}]"
+                inner_cmd = "chcp 65001 >nul && " + " ".join(worker_args)
+                spawn_cmd = f'start "{win_title}" cmd.exe /k "{inner_cmd}"'
+
+                subprocess.Popen(
+                    spawn_cmd,
+                    shell=True,
+                    cwd=str(proj_path)
+                )
+            else:
+                creationflags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
+                cmd_list = [
+                    sys.executable,
+                    "-m", "agytask.interactive_worker",
+                    "--project-dir", str(proj_path),
+                    "--tasks-file", str(tasks_path),
+                    "--session", session_id,
+                    "--model", model,
+                    "--mode", mode,
+                    "--effort", effort,
+                ]
+                if skip_perm:
+                    cmd_list.append("--dangerously-skip-permissions")
+                if not auto_next:
+                    cmd_list.append("--no-auto-next")
+                if specific_task_id:
+                    cmd_list.extend(["--task-id", str(specific_task_id)])
+
+                subprocess.Popen(
+                    cmd_list,
+                    cwd=str(proj_path),
+                    creationflags=creationflags
+                )
+
+            self.status_summary_var.set(f"🚀 تم فتح نافذة الطرفية الحية لـ {target_desc} عبر agy -i.")
+            self._log_message(f"تم إطلاق نافذة طرفية مستقلة لـ {target_desc}.")
+            self._log_message(f"شاهد عمل الوكيل مباشرة في نافذة الطرفية المفتوحة أمامك الآن.")
+
         except Exception as e:
             messagebox.showerror("فشل التشغيل", f"تعذر إطلاق نافذة الطرفية:\n{e}")
+            self._log_message(f"خطأ أثناء إطلاق الطرفية: {e}")
 
     def _start_all_tasks_interactive(self) -> None:
         """بدء تنفيذ جميع المهام المعلقة تفاعلياً."""
@@ -514,7 +591,6 @@ class AntigravityTaskRunnerUI:
             return
 
         item_id = selected[0]
-        # استخراج رقم المهمة من المعرف الداخلي task_123
         task_id = item_id.replace("task_", "")
         self._launch_worker_process(specific_task_id=task_id)
 
@@ -527,17 +603,27 @@ class AntigravityTaskRunnerUI:
 
         session_id = self.session_id_var.get().strip() or f"agy-session-{uuid.uuid4().hex[:10]}"
         model = self.model_var.get().strip() or DEFAULT_MODEL
+        agy_executable = shutil.which("agy") or "agy"
 
-        # تشغيل طرفية cmd مع تجهيز الأمر
-        creationflags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
         try:
-            subprocess.Popen(
-                ["cmd.exe", "/k", f"chcp 65001 >nul && agy --conversation {session_id} --add-dir \"{proj_path}\" --model {model}"],
-                cwd=str(proj_path),
-                creationflags=creationflags
-            )
+            if sys.platform == "win32":
+                win_title = f"Antigravity Interactive Shell [{session_id}]"
+                inner_cmd = f'chcp 65001 >nul && "{agy_executable}" --conversation {session_id} --add-dir "{proj_path}" --model {model}'
+                spawn_cmd = f'start "{win_title}" cmd.exe /k "{inner_cmd}"'
+                subprocess.Popen(spawn_cmd, shell=True, cwd=str(proj_path))
+            else:
+                creationflags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
+                subprocess.Popen(
+                    [agy_executable, "--conversation", session_id, "--add-dir", str(proj_path), "--model", model],
+                    cwd=str(proj_path),
+                    creationflags=creationflags
+                )
+
+            self._log_message(f"تم فتح طرفية agy تفاعلية حرة في: {proj_path}")
+
         except Exception as e:
             messagebox.showerror("خطأ", f"تعذر فتح الطرفية: {e}")
+            self._log_message(f"خطأ في فتح طرفية agy: {e}")
 
 
 def launch_ui() -> None:

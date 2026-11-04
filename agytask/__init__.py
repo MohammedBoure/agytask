@@ -14,16 +14,21 @@ from .runner import (
     execute_task,
     run_stream_command,
 )
-from .interactive_worker import (
-    run_interactive_pipeline,
-    run_interactive_task,
-)
 from .ui import (
     launch_ui,
     AntigravityTaskRunnerUI,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
+
+
+def __getattr__(name: str):
+    """تحميل الدوال التفاعلية عند الطلب لتفادي تحذيرات الاستيراد الدائري."""
+    if name in ("run_interactive_pipeline", "run_interactive_task"):
+        from . import interactive_worker
+        return getattr(interactive_worker, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "Task",

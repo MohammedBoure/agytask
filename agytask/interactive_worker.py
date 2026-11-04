@@ -5,6 +5,7 @@ interactive_worker.py - تشغيل مهام Antigravity تسلسلياً عبر 
 import os
 import sys
 import time
+import shutil
 import argparse
 import ctypes
 from pathlib import Path
@@ -98,8 +99,10 @@ Requirements:
 4. Provide a brief summary of completed changes.
 """
 
+    agy_executable = shutil.which("agy") or "agy"
+
     cmd = [
-        "agy",
+        agy_executable,
         "-i", prompt,
         "--conversation", session_id,
         "--add-dir", str(project_dir),
@@ -116,15 +119,19 @@ Requirements:
     print("\n" + "=" * 78)
     print(f"[*] تشغيل المهمة #{task_id} عبر [agy -i] | الجهد: [{task_effort.upper()}]")
     print(f"[*] الجلسة: [{session_id}] | النموذج: [{model}] | الوضع: [{mode}]")
+    print(f"[*] المسار التنفيذي لـ agy: {agy_executable}")
     print("=" * 78 + "\n")
 
-    # تشغيل الأمر مباشرة بحيث يرث stdio الخاص بالطرفية لتمكين واجهة agy التفاعلية
+    # تشغيل الأمر مباشرة بحيث يرث stdio الخاص بالطرفية لتمكين واجهة agy التفاعلية بالكامل
     try:
         proc = subprocess.run(cmd, cwd=str(project_dir))
         return proc.returncode
     except KeyboardInterrupt:
         print("\n\n[!] تم إيقاف تنفيذ المهمة بواسطة المستخدم (Ctrl+C).")
         raise
+    except FileNotFoundError:
+        print(f"\n[✘] خطأ: لم يتم العثور على أداة agy في النظام! يرجى التأكد من تثبيتها وإضافتها للمسار PATH.")
+        return 127
 
 
 def run_interactive_pipeline(
@@ -195,7 +202,7 @@ def run_interactive_pipeline(
             with open(tasks_file, "r", encoding="utf-8") as f:
                 content = f.read()
             import re
-            m = re.search(rf"^#\s*{re.escape(str(task_id))}(?:\s*:\s*([a-zA-Z]+))?.*?\n(.*?)(?=\n#|\Z)", content, flags=re.MULTILINE | re.DOTALL)
+            m = re.search(rf"^#\s*{re.escape(str(task_id))}(?:[ \t]+\[[a-zA-Z]+\])?(?:\s*:\s*([a-zA-Z]+))?.*?\n(.*?)(?=\n#|\Z)", content, flags=re.MULTILINE | re.DOTALL)
             if m:
                 target_tasks = [{
                     "id": str(task_id),
