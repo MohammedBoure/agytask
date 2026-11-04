@@ -1,5 +1,5 @@
 """
-cli.py - معالجة مدخلات سطر الأوامر (CLI UX) وتقديم واجهة مستخدم احترافية عبر Click.
+cli.py - معالجة مدخلات سطر الأوامر (CLI UX) ودعم التشغيل الرسومي (Tkinter UI) والوضع التفاعلي (agy -i).
 """
 
 import sys
@@ -46,6 +46,39 @@ from .runner import run_tasks, DEFAULT_MODEL
     help="اسم النموذج المستخدم لتنفيذ المهام مع agy."
 )
 @click.option(
+    "--mode",
+    type=click.Choice(["accept-edits", "auto", "plan"]),
+    default="accept-edits",
+    show_default=True,
+    help="وضع تشغيل الوكيل (Agent Execution Mode)."
+)
+@click.option(
+    "--effort",
+    type=str,
+    default="from-task",
+    show_default=True,
+    help="جهد التفكير (low, medium, high, xhigh, max أو from-task)."
+)
+@click.option(
+    "-i", "--interactive",
+    is_flag=True,
+    default=False,
+    help="تشغيل المهام حياً وبشكل مرئي عبر واجهة agy -i التفاعلية."
+)
+@click.option(
+    "--task-id",
+    type=str,
+    default=None,
+    help="تنفيذ مهمة محددة فقط برقمها."
+)
+@click.option(
+    "--gui", "--ui",
+    "launch_gui",
+    is_flag=True,
+    default=False,
+    help="فتح واجهة المستخدم الرسومية (Tkinter UI)."
+)
+@click.option(
     "--retries",
     type=int,
     default=2,
@@ -68,13 +101,20 @@ def main(
     tasks_file: str,
     session: Optional[str],
     model: str,
+    mode: str,
+    effort: str,
+    interactive: bool,
+    task_id: Optional[str],
+    launch_gui: bool,
     retries: int,
     yes: bool
 ) -> None:
     """نقطة الدخول الرئيسية لأداة الطرفية agytask."""
-    click.echo("=" * 70)
-    click.secho("                ANTIGRAVITY TASK RUNNER PIPELINE                ", fg="cyan", bold=True)
-    click.echo("=" * 70)
+    # عند طلب الواجهة الرسومية
+    if launch_gui:
+        from .ui import launch_ui
+        launch_ui()
+        return
 
     # التحقق من مسار المشروع وتفعيله تفاعلياً عند الحاجة
     resolved_proj = clean_to_absolute_path(project_dir)
@@ -137,6 +177,27 @@ def main(
             final_session = f"agy-session-{uuid.uuid4().hex[:10]}"
 
     click.secho(f"[*] Bound Session ID: {final_session}", fg="green")
+
+    # إذا اختار المستخدم الوضع التفاعلي المباشر (agy -i)
+    if interactive:
+        from .interactive_worker import run_interactive_pipeline
+        exit_code = run_interactive_pipeline(
+            project_dir_raw=str(resolved_proj),
+            tasks_file_raw=str(resolved_tasks),
+            session_id=final_session,
+            model=model,
+            mode=mode,
+            effort=effort,
+            dangerously_skip_permissions=True,
+            task_id=task_id,
+            no_auto_next=False,
+            pause_at_end=False
+        )
+        sys.exit(exit_code)
+
+    click.echo("=" * 70)
+    click.secho("                ANTIGRAVITY TASK RUNNER PIPELINE                ", fg="cyan", bold=True)
+    click.echo("=" * 70)
 
     try:
         results = run_tasks(
