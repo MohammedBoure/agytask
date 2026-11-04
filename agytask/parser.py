@@ -63,8 +63,8 @@ def parse_tasks_file(file_path: Union[str, Path]) -> Tuple[List[Task], List[str]
         content = f.read()
 
     # التعبير النمطي الشامل للترويسات
-    pattern = r"^#\s*(\d+)(?:[ \t]+\[(PENDING|COMPLETED|مكتملة)\])?(?:\s*:\s*([a-zA-Z]+))?(?:[ \t]+\[(PENDING|COMPLETED|مكتملة)\])?"
-    sections = re.split(pattern, content, flags=re.MULTILINE)
+    pattern = r"^#\s*(\d+)(?:[ \t]+\[(PENDING|COMPLETED|DONE|مكتملة|منجزة)\])?(?:\s*:\s*([a-zA-Z]+))?(?:[ \t]+\[(PENDING|COMPLETED|DONE|مكتملة|منجزة)\])?"
+    sections = re.split(pattern, content, flags=re.MULTILINE | re.IGNORECASE)
 
     tasks: List[Task] = []
     skipped_tasks: List[str] = []
@@ -82,7 +82,7 @@ def parse_tasks_file(file_path: Union[str, Path]) -> Tuple[List[Task], List[str]
         effort = (effort_raw if effort_raw else "medium").strip().lower()
 
         # التحقق مما إذا كانت المهمة مكتملة مسبقاً
-        if status in ("COMPLETED", "مكتملة"):
+        if status in ("COMPLETED", "DONE", "مكتملة", "منجزة"):
             skipped_tasks.append(task_id)
             continue
 
@@ -114,14 +114,14 @@ def mark_task_as_completed(file_path: Union[str, Path], task_id: str) -> bool:
     with open(path, "r", encoding="utf-8") as f:
         content = f.read()
 
-    # الحالة الأولى: استبدال [PENDING] بـ [COMPLETED]
-    p_pending = rf"^(#\s*{re.escape(str(task_id))}[^\n]*?)\[PENDING\]"
+    # الحالة الأولى: استبدال [PENDING] أو [DONE] بـ [COMPLETED]
+    p_pending = rf"^(#\s*{re.escape(str(task_id))}[^\n]*?)\[(?:PENDING|DONE|منجزة)\]"
     updated_content, count = re.subn(p_pending, r"\1[COMPLETED]", content, count=1, flags=re.MULTILINE | re.IGNORECASE)
 
     # الحالة الثانية: إذا لم تكن تحتوي على [PENDING] وليست مكتملة بعد، نضيف [COMPLETED]
     if count == 0:
-        p_append = rf"^(#\s*{re.escape(str(task_id))}(?:\s*:[^\n]*)?)(?!.*\[COMPLETED\])$"
-        updated_content, count = re.subn(p_append, r"\1 [COMPLETED]", content, count=1, flags=re.MULTILINE)
+        p_append = rf"^(#\s*{re.escape(str(task_id))}(?:\s*:[^\n]*)?)(?!.*\[(?:COMPLETED|DONE|مكتملة|منجزة)\])$"
+        updated_content, count = re.subn(p_append, r"\1 [COMPLETED]", content, count=1, flags=re.MULTILINE | re.IGNORECASE)
 
     if count > 0:
         # الكتابة الآمنة عبر ملف مؤقت لتفادي تلف البيانات أثناء المقاطعة المفاجئة

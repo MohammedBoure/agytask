@@ -16,6 +16,7 @@ from tkinter import ttk, filedialog, messagebox
 
 from .parser import clean_to_absolute_path, parse_tasks_file, Task
 from .runner import DEFAULT_MODEL
+from .interactive_worker import get_agy_brain_dir, resolve_agy_model_and_effort
 
 
 class AntigravityTaskRunnerUI:
@@ -33,7 +34,9 @@ class AntigravityTaskRunnerUI:
         self.model_var = tk.StringVar(value=DEFAULT_MODEL)
         self.mode_var = tk.StringVar(value="accept-edits")
         self.effort_var = tk.StringVar(value="from-task")
-        self.session_id_var = tk.StringVar(value=f"agy-session-{uuid.uuid4().hex[:10]}")
+        self.recent_sessions: List[str] = self._discover_recent_sessions()
+        default_session = self.recent_sessions[0] if self.recent_sessions else "new"
+        self.session_id_var = tk.StringVar(value=default_session)
         self.skip_permissions_var = tk.BooleanVar(value=True)
         self.auto_next_var = tk.BooleanVar(value=True)
         self.exec_engine_var = tk.StringVar(value="agy-i")
@@ -185,7 +188,18 @@ class AntigravityTaskRunnerUI:
         model_combo = ttk.Combobox(
             settings_frame,
             textvariable=self.model_var,
-            values=["gemini-3.8-flash", "gemini-3.8-pro", "claude-3-7-sonnet", "claude-3-5-sonnet", "gpt-4o"],
+            values=[
+                "gemini-3.8-flash",
+                "gemini-3.8-flash-medium",
+                "gemini-3.8-flash-high",
+                "gemini-4-argon-medium",
+                "gemini-4-argon-high",
+                "claude-sonnet-5-5-medium",
+                "claude-sonnet-5-5-high",
+                "claude-opus-5-5-medium",
+                "claude-opus-5-5-high",
+                "gpt-oss-120b-medium",
+            ],
             font=("Segoe UI", 9)
         )
         model_combo.grid(row=0, column=1, sticky="ew", padx=(0, 12), pady=4)
@@ -210,13 +224,20 @@ class AntigravityTaskRunnerUI:
         )
         effort_combo.grid(row=0, column=5, sticky="ew", pady=4)
 
-        # السطر الثاني: معرف الجلسة
+        # السطر الثاني: معرف الجلسة (قائمة منسدلة بالجلسات السابقة + إمكانية إدخال أي معرف)
         ttk.Label(settings_frame, text="معرف الجلسة:").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=4)
         session_frame = ttk.Frame(settings_frame)
         session_frame.grid(row=1, column=1, columnspan=3, sticky="ew", padx=(0, 12), pady=4)
         session_frame.columnconfigure(0, weight=1)
-        ttk.Entry(session_frame, textvariable=self.session_id_var, font=("Segoe UI", 9)).grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        ttk.Button(session_frame, text="🔄 جديد", command=self._generate_new_session, style="Secondary.TButton").grid(row=0, column=1)
+        self.session_combo = ttk.Combobox(
+            session_frame,
+            textvariable=self.session_id_var,
+            values=self.recent_sessions + ["new"],
+            font=("Segoe UI", 9)
+        )
+        self.session_combo.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        ttk.Button(session_frame, text="🔄 تحديث", command=self._refresh_sessions_list, style="Secondary.TButton").grid(row=0, column=1, padx=(0, 4))
+        ttk.Button(session_frame, text="🆕 جديد", command=self._generate_new_session, style="Secondary.TButton").grid(row=0, column=2)
 
         # آلية التشغيل
         ttk.Label(settings_frame, text="طريقة العرض:").grid(row=1, column=4, sticky="w", padx=(0, 6), pady=4)
@@ -397,11 +418,39 @@ class AntigravityTaskRunnerUI:
             self.tasks_file_var.set(chosen)
             self._reload_tasks()
 
+    def _discover_recent_sessions(self) -> List[str]:
+        """استكشاف أحدث جلسات المحادثات الموجودة في مجلد brain الخاص بـ agy."""
+        brain_dir = get_agy_brain_dir()
+        if not brain_dir.is_dir():
+            return []
+
+        sessions_with_mtime: List[tuple[float, str]] = []
+        try:
+            for child in brain_dir.iterdir():
+                if not child.is_dir():
+                    continue
+                transcript = child / ".system_generated" / "logs" / "transcript.jsonl"
+                if transcript.is_file():
+                    sessions_with_mtime.append((transcript.stat().st_mtime, child.name))
+                else:
+                    sessions_with_mtime.append((child.stat().st_mtime, child.name))
+        except Exception:
+            pass
+
+        sessions_with_mtime.sort(key=lambda item: item[0], reverse=True)
+        return [sid for _, sid in sessions_with_mtime[:25]]
+
+    def _refresh_sessions_list(self) -> None:
+        """تحديث قائمة الجلسات السابقة من مجلد محادثات agy."""
+        self.recent_sessions = self._discover_recent_sessions()
+        if hasattr(self, "session_combo"):
+            self.session_combo["values"] = self.recent_sessions + ["new"]
+        self._log_message(f"تم تحديث قائمة الجلسات المتاحة ({len(self.recent_sessions)} جلسة).")
+
     def _generate_new_session(self) -> None:
-        """توليد معرف جلسة فريد جديد."""
-        new_session = f"agy-session-{uuid.uuid4().hex[:10]}"
-        self.session_id_var.set(new_session)
-        self._log_message(f"تم توليد معرف جلسة جديد: {new_session}")
+        """تحديد بدء جلسة جديدة موحدة."""
+        self.session_id_var.set("new")
+        self._log_message("تم ضبط الجلسة على (new) لإنشاء جلسة حية جديدة موحدة عند بدء التنفيذ.")
 
     def _resolve_paths(self) -> tuple[Optional[Path], Optional[Path]]:
         """التحقق من المسارات وإرجاع كائنات Path صالحة."""
@@ -609,20 +658,35 @@ class AntigravityTaskRunnerUI:
             messagebox.showerror("خطأ", "يرجى تحديد مجلد مشروع صالح أولاً.")
             return
 
-        session_id = self.session_id_var.get().strip() or f"agy-session-{uuid.uuid4().hex[:10]}"
-        model = self.model_var.get().strip() or DEFAULT_MODEL
+        session_id = self.session_id_var.get().strip()
+        raw_model = self.model_var.get().strip() or DEFAULT_MODEL
+        raw_effort = self.effort_var.get().strip() or "medium"
+        resolved_model, _ = resolve_agy_model_and_effort(raw_model, raw_effort)
+        mode = self.mode_var.get().strip() or "accept-edits"
         agy_executable = shutil.which("agy") or "agy"
+        session_exists = bool(session_id and session_id != "new" and (get_agy_brain_dir() / session_id).is_dir())
 
         try:
             if sys.platform == "win32":
-                win_title = f"Antigravity Interactive Shell [{session_id}]"
-                inner_cmd = f'chcp 65001 >nul && "{agy_executable}" --conversation {session_id} --add-dir "{proj_path}" --model {model}'
+                win_title = f"Antigravity Interactive Shell [{session_id or 'new'}]"
+                conv_arg = f"--conversation {session_id} " if session_exists else ""
+                perm_arg = " --dangerously-skip-permissions" if self.skip_permissions_var.get() else ""
+                inner_cmd = (
+                    f'chcp 65001 >nul && "{agy_executable}" {conv_arg}'
+                    f'--add-dir "{proj_path}" --model {resolved_model} --mode {mode}{perm_arg}'
+                )
                 spawn_cmd = f'start "{win_title}" cmd.exe /k "{inner_cmd}"'
                 subprocess.Popen(spawn_cmd, shell=True, cwd=str(proj_path))
             else:
                 creationflags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
+                cmd_list = [agy_executable]
+                if session_exists:
+                    cmd_list.extend(["--conversation", session_id])
+                cmd_list.extend(["--add-dir", str(proj_path), "--model", resolved_model, "--mode", mode])
+                if self.skip_permissions_var.get():
+                    cmd_list.append("--dangerously-skip-permissions")
                 subprocess.Popen(
-                    [agy_executable, "--conversation", session_id, "--add-dir", str(proj_path), "--model", model],
+                    cmd_list,
                     cwd=str(proj_path),
                     creationflags=creationflags
                 )
