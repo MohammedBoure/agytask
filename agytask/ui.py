@@ -510,10 +510,14 @@ class AntigravityTaskRunnerUI:
 
         target_desc = f"المهمة #{specific_task_id}" if specific_task_id else "جميع المهام المعلقة"
 
-        # بناء معاملات تشغيل سكربت العامل التفاعلي
+        # الحصول على المسار المطلق الدقيق لسكربت interactive_worker.py ومجلد المستودع
+        worker_script = Path(__file__).resolve().parent / "interactive_worker.py"
+        repo_root = Path(__file__).resolve().parent.parent
+
+        # بناء معاملات تشغيل سكربت العامل التفاعلي مباشرة عبر مساره لضمان عمله في أي بيئة ومجلد
         worker_args = [
             f'"{sys.executable}"',
-            "-m", "agytask.interactive_worker",
+            f'"{worker_script}"',
             "--project-dir", f'"{proj_path}"',
             "--tasks-file", f'"{tasks_path}"',
             "--session", f'"{session_id}"',
@@ -535,7 +539,7 @@ class AntigravityTaskRunnerUI:
             if sys.platform == "win32":
                 # استخدام start cmd.exe /k لضمان فتح نافذة طرفية Command Prompt مستقلة ومرئية في المقدمة وبقائها مفتوحة
                 win_title = f"Antigravity Live Runner - {target_desc} [{session_id}]"
-                inner_cmd = "chcp 65001 >nul && " + " ".join(worker_args)
+                inner_cmd = f'chcp 65001 >nul && set "PYTHONPATH={repo_root};%PYTHONPATH%" && ' + " ".join(worker_args)
                 spawn_cmd = f'start "{win_title}" cmd.exe /k "{inner_cmd}"'
 
                 subprocess.Popen(
@@ -547,7 +551,7 @@ class AntigravityTaskRunnerUI:
                 creationflags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
                 cmd_list = [
                     sys.executable,
-                    "-m", "agytask.interactive_worker",
+                    str(worker_script),
                     "--project-dir", str(proj_path),
                     "--tasks-file", str(tasks_path),
                     "--session", session_id,
@@ -562,9 +566,13 @@ class AntigravityTaskRunnerUI:
                 if specific_task_id:
                     cmd_list.extend(["--task-id", str(specific_task_id)])
 
+                env = os.environ.copy()
+                env["PYTHONPATH"] = f"{repo_root}{os.pathsep}{env.get('PYTHONPATH', '')}"
+
                 subprocess.Popen(
                     cmd_list,
                     cwd=str(proj_path),
+                    env=env,
                     creationflags=creationflags
                 )
 

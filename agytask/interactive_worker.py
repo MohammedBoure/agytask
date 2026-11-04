@@ -11,7 +11,20 @@ import ctypes
 from pathlib import Path
 from typing import Optional, List
 
-from .parser import clean_to_absolute_path, parse_tasks_file, mark_task_as_completed, Task
+# ضمان تواجد مجلد الحزمة في sys.path حتى لو تم التشغيل من مجلد عمل خارجي (مثل StockLamPlus)
+_current_dir = Path(__file__).resolve().parent
+_repo_root = _current_dir.parent
+for _p in (str(_repo_root), str(_current_dir)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+try:
+    from agytask.parser import clean_to_absolute_path, parse_tasks_file, mark_task_as_completed, Task
+except (ImportError, ModuleNotFoundError):
+    try:
+        from parser import clean_to_absolute_path, parse_tasks_file, mark_task_as_completed, Task
+    except (ImportError, ModuleNotFoundError):
+        from .parser import clean_to_absolute_path, parse_tasks_file, mark_task_as_completed, Task
 
 # دعم قراءة ضغطة المفتاح مع مهلة زمنية في نظام ويندوز
 try:
@@ -281,7 +294,7 @@ def run_interactive_pipeline(
     print(f"ملخص التنفيذ: اكتملت {completed_count} مهمة | فشلت أو توقفت {failed_count} مهمة")
     print("=" * 78)
     if pause_at_end:
-        input("\nاضغط Enter لإغلاق هذه النافذة...")
+        input("\nاضغط Enter للإغلاق...")
 
     return 0 if failed_count == 0 else 1
 
