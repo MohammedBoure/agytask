@@ -135,6 +135,22 @@ if sys.platform == "win32":
         ]
 
 
+def is_agy_vim_mode_enabled() -> bool:
+    """
+    التحقق من ملف إعدادات Antigravity CLI (settings.json) لمعرفة ما إذا كان وضع Vim مفعلاً.
+    """
+    settings_path = Path.home() / ".gemini" / "antigravity-cli" / "settings.json"
+    if not settings_path.is_file():
+        return False
+    try:
+        data = json.loads(settings_path.read_text(encoding="utf-8", errors="replace"))
+        editor_mode = str(data.get("editorMode", "")).strip().lower()
+        editor = str(data.get("editor", "")).strip().lower()
+        return editor_mode.startswith("vim") or editor == "vim"
+    except Exception:
+        return False
+
+
 def _make_key_record(ch: str, key_down: bool, vk: int = 0, scan: int = 0) -> "INPUT_RECORD":
     """إنشاء سجل حدث ضغطة مفتاح لويندوز."""
     rec = INPUT_RECORD()
@@ -148,8 +164,20 @@ def _make_key_record(ch: str, key_down: bool, vk: int = 0, scan: int = 0) -> "IN
     return rec
 
 
+def _write_console_records(kernel32, h_conin, records: list) -> int:
+    """كتابة مصفوفة أحداث مفاتيح إلى مقبض الطرفية CONIN$."""
+    arr = (INPUT_RECORD * len(records))(*records)
+    written = wintypes.DWORD(0)
+    kernel32.WriteConsoleInputW(h_conin, ctypes.byref(arr), len(records), ctypes.byref(written))
+    return written.value
+
+
 def send_console_key_enter() -> bool:
-    """إرسال ضغطة مفتاح Enter (VK_RETURN) إلى حقل الإدخال في الطرفية التفاعلية."""
+    """
+    إرسال أمر الإرسال (Submit) إلى حقل الإدخال في الطرفية التفاعلية:
+    - إذا كان وضع Vim مفعلاً، يرسل Esc للخروج من وضع INSERT إلى وضع NORMAL ثم يضغط Enter.
+    - في الوضع العادي، يضغط Enter مباشرة.
+    """
     if sys.platform != "win32":
         return False
     try:
@@ -166,14 +194,20 @@ def send_console_key_enter() -> bool:
         if h_conin in (-1, 0, 0xFFFFFFFF, 0xFFFFFFFFFFFFFFFF):
             return False
         try:
-            records = [
+            if is_agy_vim_mode_enabled():
+                esc_records = [
+                    _make_key_record("\x1b", True, vk=0x1B, scan=0x01),
+                    _make_key_record("\x1b", False, vk=0x1B, scan=0x01),
+                ]
+                _write_console_records(kernel32, h_conin, esc_records)
+                time.sleep(0.25)
+
+            enter_records = [
                 _make_key_record("\r", True, vk=0x0D, scan=0x1C),
                 _make_key_record("\r", False, vk=0x0D, scan=0x1C),
             ]
-            arr = (INPUT_RECORD * len(records))(*records)
-            written = wintypes.DWORD(0)
-            kernel32.WriteConsoleInputW(h_conin, ctypes.byref(arr), len(records), ctypes.byref(written))
-            return written.value > 0
+            count = _write_console_records(kernel32, h_conin, enter_records)
+            return count > 0
         finally:
             kernel32.CloseHandle(h_conin)
     except Exception:
@@ -182,8 +216,14 @@ def send_console_key_enter() -> bool:
 
 def send_console_text(text: str, press_enter: bool = True) -> bool:
     """
-    كتابة نص كامل (مع دعم العربية واليونيكود) مباشرة داخل حقل إدخال واجهة agy التفاعلية
-    على دفعات متوازنة تمنع فقدان أي حرف في BubbleTea TUI، ثم ضغط مفتاح Enter لإرساله.
+    كتابة نص كامل (مع دعم العربية واليونيكود ووضع Vim) مباشرة داخل حقل إدخال واجهة agy التفاعلية:
+    1. في حال تفعيل وضع Vim داخل agy:
+       - يرسل Esc ثم حرف 'i' لضمان الدخول في وضع (-- INSERT --) قبل بدء كتابة النص
+         (حتى لا يتم تفسير أحرف النص مثل 'P' كأوامر لصق في وضع Normal).
+       - يكتب النص على دفعات متوازنة.
+       - يرسل Esc للانتقال إلى وضع (-- NORMAL --) ثم يضغط Enter لتنفيذ الإرسال (vim.normal.submit).
+    2. في الوضع القياسي:
+       - يكتب النص مباشرة ثم يضغط Enter.
     """
     if sys.platform != "win32":
         return False
@@ -203,7 +243,25 @@ def send_console_text(text: str, press_enter: bool = True) -> bool:
             return False
 
         try:
-            # إرسال النص على دفعات صغيرة (48 حرفاً في كل دفعة) لضمان استيعاب كامل في واجهة TUI
+            vim_mode = is_agy_vim_mode_enabled()
+
+            # 1. إذا كان وضع Vim مفعلاً، نضمن الدخول النظيف في وضع INSERT عبر (Esc -> i)
+            if vim_mode:
+                esc_records = [
+                    _make_key_record("\x1b", True, vk=0x1B, scan=0x01),
+                    _make_key_record("\x1b", False, vk=0x1B, scan=0x01),
+                ]
+                _write_console_records(kernel32, h_conin, esc_records)
+                time.sleep(0.2)
+
+                i_records = [
+                    _make_key_record("i", True, vk=0x49, scan=0x17),
+                    _make_key_record("i", False, vk=0x49, scan=0x17),
+                ]
+                _write_console_records(kernel32, h_conin, i_records)
+                time.sleep(0.2)
+
+            # 2. إرسال النص على دفعات صغيرة (48 حرفاً في كل دفعة) لضمان استيعاب كامل في واجهة TUI
             chunk_size = 48
             for i in range(0, len(text), chunk_size):
                 chunk = text[i : i + chunk_size]
@@ -211,20 +269,25 @@ def send_console_text(text: str, press_enter: bool = True) -> bool:
                 for ch in chunk:
                     records.append(_make_key_record(ch, True, vk=0, scan=0))
                     records.append(_make_key_record(ch, False, vk=0, scan=0))
-                arr = (INPUT_RECORD * len(records))(*records)
-                written = wintypes.DWORD(0)
-                kernel32.WriteConsoleInputW(h_conin, ctypes.byref(arr), len(records), ctypes.byref(written))
+                _write_console_records(kernel32, h_conin, records)
                 time.sleep(0.015)
 
+            # 3. إرسال الرسالة: في وضع Vim نخرج من INSERT عبر Esc ثم نضغط Enter في وضع NORMAL
             if press_enter:
                 time.sleep(0.25)
+                if vim_mode:
+                    esc_records = [
+                        _make_key_record("\x1b", True, vk=0x1B, scan=0x01),
+                        _make_key_record("\x1b", False, vk=0x1B, scan=0x01),
+                    ]
+                    _write_console_records(kernel32, h_conin, esc_records)
+                    time.sleep(0.25)
+
                 enter_records = [
                     _make_key_record("\r", True, vk=0x0D, scan=0x1C),
                     _make_key_record("\r", False, vk=0x0D, scan=0x1C),
                 ]
-                arr_enter = (INPUT_RECORD * len(enter_records))(*enter_records)
-                written = wintypes.DWORD(0)
-                kernel32.WriteConsoleInputW(h_conin, ctypes.byref(arr_enter), len(enter_records), ctypes.byref(written))
+                _write_console_records(kernel32, h_conin, enter_records)
 
             return True
         finally:
