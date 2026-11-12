@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from PySide6.QtCore import Qt, QSize, QThread, QTimer, Signal
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -123,10 +123,24 @@ QComboBox::drop-down {
 
 QComboBox QAbstractItemView {
     background-color: #FFFFFF;
+    color: #0F172A;
     border: 1px solid #CBD5E1;
     selection-background-color: #E6F4F1;
     selection-color: #0F172A;
     outline: 0;
+}
+
+QComboBox QAbstractItemView::item {
+    min-height: 28px;
+    padding: 4px 10px;
+    color: #0F172A;
+    background-color: #FFFFFF;
+}
+
+QComboBox QAbstractItemView::item:selected,
+QComboBox QAbstractItemView::item:hover {
+    background-color: #E6F4F1;
+    color: #0F172A;
 }
 
 QPushButton#PrimaryBtn {
@@ -889,12 +903,30 @@ class AntigravityTaskRunnerUI(QMainWindow):
             self._log_message(f"Failed to open agy shell: {e}")
 
 
+def _build_light_palette() -> QPalette:
+    """Create a consistent light palette so OS dark mode does not leak into popups."""
+    palette = QPalette()
+    palette.setColor(QPalette.Window, QColor("#F8FAFC"))
+    palette.setColor(QPalette.WindowText, QColor("#0F172A"))
+    palette.setColor(QPalette.Base, QColor("#FFFFFF"))
+    palette.setColor(QPalette.AlternateBase, QColor("#F8FAFC"))
+    palette.setColor(QPalette.Text, QColor("#0F172A"))
+    palette.setColor(QPalette.Button, QColor("#FFFFFF"))
+    palette.setColor(QPalette.ButtonText, QColor("#0F172A"))
+    palette.setColor(QPalette.Highlight, QColor("#E6F4F1"))
+    palette.setColor(QPalette.HighlightedText, QColor("#0F172A"))
+    palette.setColor(QPalette.PlaceholderText, QColor("#94A3B8"))
+    return palette
+
+
 def launch_ui() -> None:
     """Launch the PySide6 desktop GUI."""
     app = QApplication.instance()
     owns_app = app is None
     if owns_app:
         app = QApplication(sys.argv)
+    app.setStyle("Fusion")
+    app.setPalette(_build_light_palette())
     app.setStyleSheet(APP_STYLESHEET)
 
     window = AntigravityTaskRunnerUI()
