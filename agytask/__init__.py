@@ -1,5 +1,5 @@
 """
-agytask - أداة وحزمة بايثون لأتمتة وتشغيل مهام Antigravity.
+agytask - Antigravity Task Runner CLI, Desktop GUI, and Python API.
 """
 
 from .parser import (
@@ -8,8 +8,13 @@ from .parser import (
     mark_task_as_completed,
     clean_to_absolute_path,
 )
-from .runner import (
+from .models import (
     DEFAULT_MODEL,
+    ModelInfo,
+    fetch_available_models,
+    resolve_agy_model_and_effort,
+)
+from .runner import (
     run_tasks,
     execute_task,
     run_stream_command,
@@ -19,11 +24,11 @@ from .ui import (
     AntigravityTaskRunnerUI,
 )
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 
 
 def __getattr__(name: str):
-    """تحميل الدوال التفاعلية عند الطلب لتفادي تحذيرات الاستيراد الدائري."""
+    """Lazily load interactive worker functions to avoid circular imports."""
     if name in ("run_interactive_pipeline", "run_interactive_task"):
         from . import interactive_worker
         return getattr(interactive_worker, name)
@@ -32,6 +37,7 @@ def __getattr__(name: str):
 
 __all__ = [
     "Task",
+    "ModelInfo",
     "run_tasks",
     "execute_task",
     "run_stream_command",
@@ -42,6 +48,8 @@ __all__ = [
     "parse_tasks_file",
     "mark_task_as_completed",
     "clean_to_absolute_path",
+    "fetch_available_models",
+    "resolve_agy_model_and_effort",
     "DEFAULT_MODEL",
     "__version__",
 ]

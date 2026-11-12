@@ -1,62 +1,43 @@
 # agytask - Antigravity Task Runner
 
-أداة احترافية وحزمة بايثون متكاملة ذات واجهة رسومية بـ **Tkinter** وواجهة سطر أوامر (**CLI**) لأتمتة وتشغيل وإدارة مهام Antigravity تسلسلياً بالاعتماد على ملفات المهام بصيغة Markdown، مع دعم الدخول المباشر إلى واجهة **`agy -i`** التفاعلية لمشاهدة عمل الوكيل حياً بالكامل.
+A Python package, CLI tool, and **PySide6** desktop application for automating sequential Markdown task pipelines with **Antigravity (`agy`)**, featuring live interactive TUI orchestration and real-time model discovery.
 
 ---
 
-## 📁 هيكلية المشروع ودليل الملفات
+## Project Structure
 
-- **[`pyproject.toml`](file:///D:/git/agytask/pyproject.toml)**: ملف إعدادات البناء والتثبيت ونقطة دخول الطرفية `agytask = "agytask.cli:main"` والتبعيات.
-- **[`main.py`](file:///D:/git/agytask/main.py)**: نقطة التشغيل الرئيسية المباشرة؛ تفتح الواجهة الرسومية تلقائياً عند التشغيل بدون معاملات، وتمرر الأوامر للطرفية عند تمرير معاملات.
-- **[`.gitignore`](file:///D:/git/agytask/.gitignore)**: تحديد الملفات والمجلدات المستثناة من التتبع في مستودع Git.
-- **[`README.md`](file:///D:/git/agytask/README.md)**: التوثيق الشامل ودليل الاستخدام والتثبيت.
-- **[`agytask/`](file:///D:/git/agytask/agytask/)**: المجلد البرمجي للحزمة:
-  - **[`__init__.py`](file:///D:/git/agytask/agytask/__init__.py)**: تصدير الواجهات البرمجية العامة وتحديد رقم الإصدار `0.2.0`.
-  - **[`ui.py`](file:///D:/git/agytask/agytask/ui.py)**: واجهة المستخدم الرسومية المتكاملة المبنية باستخدام Tkinter و ttk لاختيار مجلد المشروع وملف المهام وضبط الجلسة والنموذج وتشغيل المهام التفاعلية.
-  - **[`interactive_worker.py`](file:///D:/git/agytask/agytask/interactive_worker.py)**: المشغّل التفاعلي المباشر الذي ينفذ المهام داخل واجهة `agy -i` الحية ويقوم بتحديث ملف المهام تلقائياً بوسم `[COMPLETED]`.
-  - **[`cli.py`](file:///D:/git/agytask/agytask/cli.py)**: معالجة خيارات الطرفية والوضع التفاعلي باستخدام مكتبة Click ودعم رايات `--ui` و `-i`.
-  - **[`parser.py`](file:///D:/git/agytask/agytask/parser.py)**: دوال قراءة وتفكيك ملف المهام وتحديث حالة الإنجاز `[COMPLETED]` بأمان.
-  - **[`runner.py`](file:///D:/git/agytask/agytask/runner.py)**: دوال تشغيل أوامر subprocess والبث الحي والتعافي التلقائي وإدارة الإشارات.
-  - **[`README.md`](file:///D:/git/agytask/agytask/README.md)**: دليل مجلد الحزمة الداخلي.
+- **[`pyproject.toml`](file:///D:/git/agytask/pyproject.toml)**: Package metadata, dependencies (`click`, `PySide6`), and `agytask` console script entry point.
+- **[`main.py`](file:///D:/git/agytask/main.py)**: Direct entry point; launches the PySide6 desktop GUI when run without arguments or with `--ui` / `--gui`, and delegates to the CLI otherwise.
+- **[`.gitignore`](file:///D:/git/agytask/.gitignore)**: Git ignore rules.
+- **[`README.md`](file:///D:/git/agytask/README.md)**: Project overview and usage guide.
+- **[`agytask/`](file:///D:/git/agytask/agytask/)**: Core package source directory (see [`agytask/README.md`](file:///D:/git/agytask/agytask/README.md) for per-file details).
 
 ---
 
-## 🎨 تشغيل الواجهة الرسومية (Tkinter GUI)
+## Desktop GUI (PySide6)
 
-يمكنك فتح الواجهة الرسومية مباشرة ببساطة عبر:
+Launch the desktop interface directly:
 
 ```bash
 python main.py
 ```
 
-أو عبر أمر الأداة بعد تثبيتها:
+Or after editable installation:
 
 ```bash
 agytask --ui
 ```
 
-### مميزات الواجهة الرسومية:
-1. **اختيار مجلد المشروع**: زر تصفح لاختيار مجلد المشروع المراد العمل عليه، مع فحص تلقائي لملف `TASKS.md`.
-2. **اختيار ملف المهام**: زر تصفح لتحديد أي ملف Markdown (`.md`) للمهام.
-3. **خيارات متقدمة**:
-   - اختيار النموذج الذكي (`gemini-3.8-flash`, `gemini-3.8-pro`, `claude-3-7-sonnet` وغيرها أو إدخال مخصص).
-   - تحديد وضع الوكيل (`accept-edits`, `auto`, `plan`).
-   - تحديد جهد التفكير (`from-task`, `low`, `medium`, `high`, `xhigh`, `max`).
-   - إدارة الجلسات (معرف الجلسة Conversation ID مع زر توليد UUID تلقائي).
-   - تخطي طلبات الأذونات تلقائياً (`--dangerously-skip-permissions`).
-4. **جدول استعراض المهام الحي**:
-   - قراءة تلقائية وتفصيلية للمهام وحالتها (قيد الانتظار ⏳ أو مكتملة ✔).
-   - استطلاع دوري وتحديث تلقائي للجدول لحظة اكتمال المهام أثناء تشغيل الوكيل.
-5. **التشغيل الحي التفاعلي عبر `agy -i`**:
-   - زر **`بدء تشغيل المهام التفاعلية (agy -i)`**: يفتح نافذة طرفية مخصصة تدخل الأوامر مباشرة في `agy -i` حيث تشاهد الوكيل وهو يعمل ويعدل الملفات لحظة بلحظة.
-   - زر **`تشغيل المهمة المحددة فقط`**: لتنفيذ مهمة معينة يتم اختيارها من الجدول مباشرة.
-   - زر **`فتح طرفية agy تفاعلية`**: لفتح جلسة حرة في بيئة المشروع.
+### Key Features:
+1. **Live Model Discovery (`agy models`)**: Automatically queries `agy models` in the background on startup (with a manual Refresh button) so newly available models appear immediately.
+2. **Always-On Automation**: Tool permission skipping (`--dangerously-skip-permissions`) and sequential auto-continue between tasks are always enabled without cluttering the interface.
+3. **Session Management**: Auto-discovers recent conversations from `~/.gemini/antigravity-cli/brain` and lets you resume an existing session or start a unified new one.
+4. **Live Task Table**: Parses Markdown task files, separates pending and completed tasks, and auto-reloads whenever the tasks file changes on disk.
+5. **Interactive & Shell Launchers**: Run all pending tasks, run a single selected task, or open an interactive `agy` shell in the project directory.
 
 ---
 
-## 🚀 التثبيت المحلي في وضع التطوير (Editable Mode)
-
-لتثبيت الحزمة محلياً وجعل أمر `agytask` متاحاً مباشرة في موجه الأوامر / الطرفية، نفّذ الأمر التالي من مجلد المشروع:
+## Installation (Editable Mode)
 
 ```bash
 pip install -e .
@@ -64,74 +45,24 @@ pip install -e .
 
 ---
 
-## 💻 استخدام أداة سطر الأوامر (CLI)
-
-بعد التثبيت، يمكنك استدعاء الأداة مباشرة:
+## Command-Line Interface (CLI)
 
 ```bash
 agytask [OPTIONS]
 ```
 
-### المعاملات والخيارات المتاحة (Flags):
-
-| الخيار | الخيار المختصر | الوصف | القيمة الافتراضية |
+| Option | Short | Description | Default |
 | :--- | :--- | :--- | :--- |
-| `--gui` / `--ui` | | فتح الواجهة الرسومية (Tkinter UI) | `False` |
-| `--interactive` | `-i` | تشغيل المهام حياً عبر واجهة `agy -i` التفاعلية | `False` |
-| `--project-dir` | `-p` | مسار مجلد المشروع المراد العمل عليه | `.` (المجلد الحالي) |
-| `--tasks-file` | `-f` | مسار ملف المهام بصيغة Markdown | `TASKS.md` |
-| `--session` | `-s` | معرف الجلسة / المحادثة (Conversation ID) | توليد تلقائي لـ UUID |
-| `--model` | `-m` | اسم النموذج المستخدم مع `agy` | `gemini-3.8-flash` |
-| `--mode` | | وضع تنفيذ الوكيل (`accept-edits`, `auto`, `plan`) | `accept-edits` |
-| `--effort` | | جهد التفكير (أو `from-task` للقراءة من الملف) | `from-task` |
-| `--task-id` | | تنفيذ مهمة محددة فقط برقمها | لا شيء (الكل) |
-| `--retries` | | عدد محاولات التعافي عند حدوث خطأ | `2` |
-| `--yes` | `-y` | تخطي رسائل التأكيد والبدء المباشر | `False` |
-| `--help` | `-h` | عرض رسالة المساعدة ودليل الخيارات | |
-| `--version` | | عرض رقم إصدار الأداة | |
-
-### أمثلة على الاستخدام:
-
-1. **التشغيل بالواجهة الرسومية:**
-   ```bash
-   python main.py
-   # أو
-   agytask --ui
-   ```
-
-2. **التشغيل التفاعلي الحي المباشر عبر `agy -i` من الطرفية:**
-   ```bash
-   agytask -p "C:\MyProject" -f "TASKS.md" -i
-   ```
-
-3. **تشغيل مهمة محددة برقمها تفاعلياً عبر `agy -i`:**
-   ```bash
-   agytask -i --task-id 3
-   ```
-
-4. **التشغيل في وضع البث النصي الكلاسيكي بدون تأكيد:**
-   ```bash
-   agytask -p "C:\MyProject" -f "TASKS.md" -y
-   ```
-
----
-
-## 🐍 الاستخدام كمكتبة بايثون (Python API)
-
-يمكن استيراد الحزمة واستدعاء دوالها مباشرة داخل مشاريع وبرمجيات بايثون الأخرى:
-
-```python
-from agytask import launch_ui, run_interactive_pipeline, run_tasks
-
-# 1. فتح الواجهة الرسومية برمجياً:
-# launch_ui()
-
-# 2. تشغيل المهام تفاعلياً عبر agy -i:
-run_interactive_pipeline(
-    project_dir_raw=".",
-    tasks_file_raw="TASKS.md",
-    session_id="my-session-id",
-    model="gemini-3.8-flash",
-    mode="accept-edits"
-)
-```
+| `--gui` / `--ui` | | Launch the PySide6 desktop GUI | `False` |
+| `--interactive` | `-i` | Run tasks sequentially inside the live `agy` TUI | `False` |
+| `--project-dir` | `-p` | Target project directory | `.` |
+| `--tasks-file` | `-f` | Path to the Markdown tasks file | `TASKS.md` |
+| `--session` | `-s` | Conversation / Session ID | Auto-generated UUID |
+| `--model` | `-m` | Model ID for `agy` | `gemini-3.8-flash-medium` |
+| `--mode` | | Agent execution mode (`accept-edits`, `auto`, `plan`) | `accept-edits` |
+| `--effort` | | Reasoning effort (`from-task`, `low`, `medium`, `high`, `xhigh`, `max`) | `from-task` |
+| `--task-id` | | Run only a specific task by numeric ID | `None` |
+| `--retries` | | Automatic recovery retries on failure | `2` |
+| `--yes` | `-y` | Skip confirmation prompts | `False` |
+| `--help` | `-h` | Show help message | |
+| `--version` | | Show version | |

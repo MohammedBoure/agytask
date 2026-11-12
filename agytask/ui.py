@@ -1,5 +1,5 @@
 """
-ui.py - واجهة مستخدم رسومية احترافية مبنية بـ Tkinter لإدارة وتشغيل مهام Antigravity تفاعلياً.
+ui.py - Modern PySide6 desktop interface for Antigravity Task Runner.
 """
 
 import os
@@ -9,422 +9,585 @@ import shutil
 import datetime
 import subprocess
 from pathlib import Path
-from typing import Optional, List
+from typing import List, Optional, Tuple
 
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from PySide6.QtCore import Qt, QSize, QThread, QTimer, Signal
+from PySide6.QtGui import QColor, QFont
+from PySide6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QFileDialog,
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QMainWindow,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 
-from .parser import clean_to_absolute_path, parse_tasks_file, Task
-from .runner import DEFAULT_MODEL
-from .interactive_worker import get_agy_brain_dir, resolve_agy_model_and_effort
+from .icons import get_icon, get_pixmap
+from .interactive_worker import get_agy_brain_dir
+from .models import (
+    DEFAULT_MODEL,
+    FALLBACK_MODELS,
+    ModelInfo,
+    fetch_available_models,
+    resolve_agy_model_and_effort,
+)
+from .parser import Task, clean_to_absolute_path, parse_tasks_file
 
 
-class AntigravityTaskRunnerUI:
-    """فئة الواجهة الرسومية الرئيسية لـ Antigravity Task Runner."""
+APP_STYLESHEET = """
+QMainWindow, QWidget#CentralRoot {
+    background-color: #F8FAFC;
+    color: #0F172A;
+    font-family: "Segoe UI", system-ui, sans-serif;
+    font-size: 13px;
+}
 
-    def __init__(self, root: tk.Tk):
-        self.root = root
-        self.root.title("Antigravity Task Runner - مُشغّل المهام التفاعلي (agy -i)")
-        self.root.geometry("960x780")
-        self.root.minsize(850, 680)
+QFrame#CardPanel {
+    background-color: #FFFFFF;
+    border: 1px solid #DDE3EA;
+    border-radius: 8px;
+}
 
-        # المتغيرات المرتبطة بعناصر التحكم
-        self.project_dir_var = tk.StringVar(value=os.getcwd())
-        self.tasks_file_var = tk.StringVar(value="")
-        self.model_var = tk.StringVar(value=DEFAULT_MODEL)
-        self.mode_var = tk.StringVar(value="accept-edits")
-        self.effort_var = tk.StringVar(value="from-task")
-        self.recent_sessions: List[str] = self._discover_recent_sessions()
-        default_session = self.recent_sessions[0] if self.recent_sessions else "new"
-        self.session_id_var = tk.StringVar(value=default_session)
-        self.skip_permissions_var = tk.BooleanVar(value=True)
-        self.auto_next_var = tk.BooleanVar(value=True)
-        self.exec_engine_var = tk.StringVar(value="agy-i")
-        self.status_summary_var = tk.StringVar(value="جاري فحص ملف المهام...")
+QFrame#CardPanel QLabel {
+    border: none;
+    background: transparent;
+}
+
+QLabel#PageTitle {
+    font-size: 18px;
+    font-weight: 700;
+    color: #0F172A;
+}
+
+QLabel#PageSubtitle {
+    font-size: 12px;
+    color: #64748B;
+}
+
+QLabel#SectionTitle {
+    font-size: 13px;
+    font-weight: 700;
+    color: #0F172A;
+}
+
+QLabel#FieldLabel {
+    font-size: 12px;
+    font-weight: 600;
+    color: #334155;
+}
+
+QLabel#StatusSummary {
+    font-size: 12px;
+    font-weight: 600;
+    color: #0E7471;
+}
+
+QLabel#RuntimeBadge {
+    background-color: #E6F4F1;
+    color: #0E7471;
+    border: 1px solid #B8E1DC;
+    border-radius: 12px;
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+QLineEdit, QComboBox {
+    background-color: #FFFFFF;
+    border: 1px solid #CBD5E1;
+    border-radius: 6px;
+    padding: 0 10px;
+    color: #0F172A;
+    font-size: 13px;
+}
+
+QLineEdit:focus, QComboBox:focus {
+    border: 1.5px solid #0E7471;
+}
+
+QComboBox::drop-down {
+    border: none;
+    width: 26px;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #FFFFFF;
+    border: 1px solid #CBD5E1;
+    selection-background-color: #E6F4F1;
+    selection-color: #0F172A;
+    outline: 0;
+}
+
+QPushButton#PrimaryBtn {
+    background-color: #0E7471;
+    color: #FFFFFF;
+    border: none;
+    border-radius: 6px;
+    padding: 0 16px;
+    font-weight: 700;
+    font-size: 13px;
+}
+
+QPushButton#PrimaryBtn:hover {
+    background-color: #0A5C59;
+}
+
+QPushButton#PrimaryBtn:pressed {
+    background-color: #084846;
+}
+
+QPushButton#TealOutlineBtn {
+    background-color: #FFFFFF;
+    color: #0E7471;
+    border: 1.5px solid #0E7471;
+    border-radius: 6px;
+    padding: 0 14px;
+    font-weight: 600;
+    font-size: 13px;
+}
+
+QPushButton#TealOutlineBtn:hover {
+    background-color: #E6F4F1;
+}
+
+QPushButton#SecondaryBtn {
+    background-color: #FFFFFF;
+    color: #334155;
+    border: 1px solid #CBD5E1;
+    border-radius: 6px;
+    padding: 0 12px;
+    font-weight: 600;
+    font-size: 12px;
+}
+
+QPushButton#SecondaryBtn:hover {
+    background-color: #F1F5F9;
+    border-color: #94A3B8;
+}
+
+QTableWidget {
+    background-color: #FFFFFF;
+    alternate-background-color: #F8FAFC;
+    border: 1px solid #E2E8F0;
+    border-radius: 6px;
+    gridline-color: #F1F5F9;
+    color: #0F172A;
+    selection-background-color: #E6F4F1;
+    selection-color: #0F172A;
+    outline: 0;
+}
+
+QHeaderView::section {
+    background-color: #F1F5F9;
+    color: #334155;
+    font-weight: 700;
+    font-size: 12px;
+    border: none;
+    border-bottom: 1px solid #DDE3EA;
+    border-right: 1px solid #E2E8F0;
+    padding: 0 10px;
+}
+
+QHeaderView::section:last {
+    border-right: none;
+}
+
+QPlainTextEdit#ActivityLog {
+    background-color: #0F172A;
+    color: #E2E8F0;
+    border: 1px solid #1E293B;
+    border-radius: 6px;
+    padding: 8px;
+    font-family: "Consolas", "Cascadia Mono", monospace;
+    font-size: 12px;
+}
+"""
+
+
+class ModelLoaderThread(QThread):
+    """Background worker that queries `agy models` without blocking the UI."""
+
+    models_loaded = Signal(list, bool)
+
+    def run(self) -> None:
+        models, is_live = fetch_available_models(timeout=12.0)
+        self.models_loaded.emit(models, is_live)
+
+
+class AntigravityTaskRunnerUI(QMainWindow):
+    """Main PySide6 window for Antigravity Task Runner."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setLayoutDirection(Qt.LeftToRight)
+        self.setWindowTitle("Antigravity Task Runner")
+        self.resize(1020, 800)
+        self.setMinimumSize(880, 680)
+        self.setWindowIcon(get_icon("layers", size=24, color="#0E7471"))
 
         self.last_tasks_mtime: float = 0.0
         self.pending_tasks: List[Task] = []
         self.completed_task_ids: List[str] = []
+        self.recent_sessions: List[str] = self._discover_recent_sessions()
+        self._model_thread: Optional[ModelLoaderThread] = None
 
-        # محاولة البحث عن TASKS.md أو tasks.md في المجلد الحالي افتراضياً
-        cur_dir = Path(self.project_dir_var.get())
-        for candidate_name in ("TASKS.md", "tasks.md", "docs/tasks.md", "docs/TASKS.md"):
-            cand = cur_dir / candidate_name
-            if cand.is_file():
-                self.tasks_file_var.set(str(cand))
-                break
-        if not self.tasks_file_var.get():
-            self.tasks_file_var.set("TASKS.md")
-
-        self._configure_styles()
         self._build_ui()
+        self._initialize_defaults()
         self._reload_tasks()
+        self._refresh_models_async()
 
-        # إضافة رسالة ترحيبية في سجل النشاط
-        self._log_message("مرحباً بك في Antigravity Task Runner. حدد مسارات العمل واضغط على بدء التشغيل.")
+        self._log_message("Antigravity Task Runner ready. Auto-approve permissions and auto-continue are enabled.")
 
-        # بدء عملية الاستطلاع الدوري لتحديث حالة المهام تلقائياً عند تعديل الملف
-        self.root.after(2000, self._auto_poll_tasks)
+        self._poll_timer = QTimer(self)
+        self._poll_timer.setInterval(2000)
+        self._poll_timer.timeout.connect(self._auto_poll_tasks)
+        self._poll_timer.start()
 
-    def _configure_styles(self) -> None:
-        """تهيئة المظهر والأنماط البصرية باستخدام ttk.Style."""
-        style = ttk.Style()
-        try:
-            style.theme_use("clam")
-        except Exception:
-            pass
+    def _create_card(self) -> QFrame:
+        card = QFrame()
+        card.setObjectName("CardPanel")
+        return card
 
-        self.root.configure(bg="#f8fafc")
-
-        style.configure("TFrame", background="#f8fafc")
-        style.configure("TLabelframe", background="#f8fafc", font=("Segoe UI", 10, "bold"))
-        style.configure("TLabelframe.Label", background="#f8fafc", foreground="#1e293b")
-        style.configure("TLabel", background="#f8fafc", font=("Segoe UI", 9), foreground="#334155")
-        style.configure("TCheckbutton", background="#f8fafc", font=("Segoe UI", 9), foreground="#1e293b")
-        style.configure("TRadiobutton", background="#f8fafc", font=("Segoe UI", 9), foreground="#1e293b")
-
-        # تخصيص الأزرار
-        style.configure(
-            "Primary.TButton",
-            font=("Segoe UI", 10, "bold"),
-            background="#2563eb",
-            foreground="#ffffff",
-            padding=6
-        )
-        style.map(
-            "Primary.TButton",
-            background=[("active", "#1d4ed8"), ("pressed", "#1e40af")],
-            foreground=[("active", "#ffffff")]
-        )
-
-        style.configure(
-            "Secondary.TButton",
-            font=("Segoe UI", 9),
-            background="#e2e8f0",
-            foreground="#1e293b",
-            padding=5
-        )
-        style.map(
-            "Secondary.TButton",
-            background=[("active", "#cbd5e1")]
-        )
-
-        style.configure(
-            "AccentGreen.TButton",
-            font=("Segoe UI", 9, "bold"),
-            background="#16a34a",
-            foreground="#ffffff",
-            padding=5
-        )
-        style.map(
-            "AccentGreen.TButton",
-            background=[("active", "#15803d")]
-        )
-
-        # تخصيص جدول المهام Treeview
-        style.configure(
-            "Treeview",
-            font=("Segoe UI", 9),
-            rowheight=28,
-            background="#ffffff",
-            fieldbackground="#ffffff"
-        )
-        style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"), foreground="#1e293b")
+    def _make_button(
+        self,
+        text: str,
+        object_name: str,
+        icon_name: Optional[str] = None,
+        icon_color: str = "#334155",
+        height: int = 36,
+    ) -> QPushButton:
+        btn = QPushButton(text)
+        btn.setObjectName(object_name)
+        btn.setFixedHeight(height)
+        btn.setCursor(Qt.PointingHandCursor)
+        if icon_name:
+            btn.setIcon(get_icon(icon_name, size=16, color=icon_color))
+            btn.setIconSize(QSize(16, 16))
+        return btn
 
     def _build_ui(self) -> None:
-        """بناء جميع عناصر الواجهة الرسومية."""
-        main_container = ttk.Frame(self.root, padding="14")
-        main_container.pack(fill=tk.BOTH, expand=True)
+        central = QWidget()
+        central.setObjectName("CentralRoot")
+        self.setCentralWidget(central)
 
-        # 1. الترويسة العليا (Header)
-        header_frame = ttk.Frame(main_container)
-        header_frame.pack(fill=tk.X, pady=(0, 10))
+        root_layout = QVBoxLayout(central)
+        root_layout.setContentsMargins(18, 16, 18, 16)
+        root_layout.setSpacing(12)
 
-        title_label = tk.Label(
-            header_frame,
-            text="⚡ Antigravity Task Runner - مُشغّل المهام التفاعلي (agy -i)",
-            font=("Segoe UI", 14, "bold"),
-            bg="#f8fafc",
-            fg="#0f172a"
+        # 1. Header
+        header_row = QHBoxLayout()
+        header_row.setSpacing(10)
+
+        logo_label = QLabel()
+        logo_label.setPixmap(get_pixmap("layers", size=28, color="#0E7471"))
+        header_row.addWidget(logo_label, alignment=Qt.AlignVCenter)
+
+        title_col = QVBoxLayout()
+        title_col.setSpacing(2)
+        title_lbl = QLabel("Antigravity Task Runner")
+        title_lbl.setObjectName("PageTitle")
+        subtitle_lbl = QLabel("Sequential Markdown task execution in live interactive agy sessions")
+        subtitle_lbl.setObjectName("PageSubtitle")
+        title_col.addWidget(title_lbl)
+        title_col.addWidget(subtitle_lbl)
+        header_row.addLayout(title_col)
+        header_row.addStretch(1)
+
+        runtime_badge = QLabel("Auto-Approve & Auto-Continue Active")
+        runtime_badge.setObjectName("RuntimeBadge")
+        header_row.addWidget(runtime_badge, alignment=Qt.AlignVCenter)
+
+        root_layout.addLayout(header_row)
+
+        # 2. Workspace & Files Card
+        paths_card = self._create_card()
+        paths_layout = QGridLayout(paths_card)
+        paths_layout.setContentsMargins(14, 12, 14, 12)
+        paths_layout.setHorizontalSpacing(10)
+        paths_layout.setVerticalSpacing(8)
+        paths_layout.setColumnStretch(1, 1)
+
+        paths_title = QLabel("Workspace & Task Source")
+        paths_title.setObjectName("SectionTitle")
+        paths_layout.addWidget(paths_title, 0, 0, 1, 3)
+
+        proj_lbl = QLabel("Project Directory")
+        proj_lbl.setObjectName("FieldLabel")
+        self.project_dir_edit = QLineEdit()
+        self.project_dir_edit.setFixedHeight(36)
+        self.project_dir_edit.setPlaceholderText("Select project root directory...")
+        browse_proj_btn = self._make_button("Browse...", "SecondaryBtn", "folder", "#334155")
+        browse_proj_btn.clicked.connect(self._browse_project_dir)
+
+        paths_layout.addWidget(proj_lbl, 1, 0)
+        paths_layout.addWidget(self.project_dir_edit, 1, 1)
+        paths_layout.addWidget(browse_proj_btn, 1, 2)
+
+        tasks_lbl = QLabel("Tasks File (.md)")
+        tasks_lbl.setObjectName("FieldLabel")
+        self.tasks_file_edit = QLineEdit()
+        self.tasks_file_edit.setFixedHeight(36)
+        self.tasks_file_edit.setPlaceholderText("TASKS.md")
+        self.tasks_file_edit.editingFinished.connect(self._reload_tasks)
+        browse_tasks_btn = self._make_button("Browse...", "SecondaryBtn", "file", "#334155")
+        browse_tasks_btn.clicked.connect(self._browse_tasks_file)
+
+        paths_layout.addWidget(tasks_lbl, 2, 0)
+        paths_layout.addWidget(self.tasks_file_edit, 2, 1)
+        paths_layout.addWidget(browse_tasks_btn, 2, 2)
+
+        root_layout.addWidget(paths_card)
+
+        # 3. Agent & Session Configuration Card
+        config_card = self._create_card()
+        config_layout = QGridLayout(config_card)
+        config_layout.setContentsMargins(14, 12, 14, 12)
+        config_layout.setHorizontalSpacing(12)
+        config_layout.setVerticalSpacing(8)
+        config_layout.setColumnStretch(1, 2)
+        config_layout.setColumnStretch(3, 1)
+        config_layout.setColumnStretch(5, 1)
+
+        config_title = QLabel("Agent & Session Configuration")
+        config_title.setObjectName("SectionTitle")
+        config_layout.addWidget(config_title, 0, 0, 1, 6)
+
+        # Model row with live refresh
+        model_lbl = QLabel("Model")
+        model_lbl.setObjectName("FieldLabel")
+        model_row = QHBoxLayout()
+        model_row.setSpacing(6)
+        self.model_combo = QComboBox()
+        self.model_combo.setFixedHeight(36)
+        self.model_combo.setEditable(True)
+        self.model_combo.setInsertPolicy(QComboBox.NoInsert)
+        self.refresh_models_btn = self._make_button("", "SecondaryBtn", "refresh", "#334155")
+        self.refresh_models_btn.setFixedWidth(36)
+        self.refresh_models_btn.setToolTip("Refresh live models from `agy models`")
+        self.refresh_models_btn.clicked.connect(self._refresh_models_async)
+        model_row.addWidget(self.model_combo, 1)
+        model_row.addWidget(self.refresh_models_btn)
+
+        mode_lbl = QLabel("Agent Mode")
+        mode_lbl.setObjectName("FieldLabel")
+        self.mode_combo = QComboBox()
+        self.mode_combo.setFixedHeight(36)
+        self.mode_combo.addItems(["accept-edits", "auto", "plan"])
+
+        effort_lbl = QLabel("Effort")
+        effort_lbl.setObjectName("FieldLabel")
+        self.effort_combo = QComboBox()
+        self.effort_combo.setFixedHeight(36)
+        self.effort_combo.addItems(["from-task", "low", "medium", "high", "xhigh", "max"])
+
+        config_layout.addWidget(model_lbl, 1, 0)
+        config_layout.addLayout(model_row, 1, 1)
+        config_layout.addWidget(mode_lbl, 1, 2)
+        config_layout.addWidget(self.mode_combo, 1, 3)
+        config_layout.addWidget(effort_lbl, 1, 4)
+        config_layout.addWidget(self.effort_combo, 1, 5)
+
+        # Session row
+        session_lbl = QLabel("Session ID")
+        session_lbl.setObjectName("FieldLabel")
+        session_row = QHBoxLayout()
+        session_row.setSpacing(6)
+        self.session_combo = QComboBox()
+        self.session_combo.setFixedHeight(36)
+        self.session_combo.setEditable(True)
+        self.session_combo.setInsertPolicy(QComboBox.NoInsert)
+
+        refresh_sess_btn = self._make_button("Refresh", "SecondaryBtn", "refresh", "#334155")
+        refresh_sess_btn.clicked.connect(self._refresh_sessions_list)
+        new_sess_btn = self._make_button("New", "SecondaryBtn", "plus", "#0E7471")
+        new_sess_btn.clicked.connect(self._generate_new_session)
+
+        session_row.addWidget(self.session_combo, 1)
+        session_row.addWidget(refresh_sess_btn)
+        session_row.addWidget(new_sess_btn)
+
+        config_layout.addWidget(session_lbl, 2, 0)
+        config_layout.addLayout(session_row, 2, 1, 1, 5)
+
+        root_layout.addWidget(config_card)
+
+        # 4. Tasks Table Card
+        tasks_card = self._create_card()
+        tasks_layout = QVBoxLayout(tasks_card)
+        tasks_layout.setContentsMargins(14, 12, 14, 12)
+        tasks_layout.setSpacing(8)
+
+        tasks_header = QHBoxLayout()
+        tasks_title = QLabel("Tasks Queue")
+        tasks_title.setObjectName("SectionTitle")
+        tasks_header.addWidget(tasks_title)
+        tasks_header.addStretch(1)
+        reload_btn = self._make_button("Reload Tasks", "SecondaryBtn", "refresh", "#334155", height=32)
+        reload_btn.clicked.connect(self._reload_tasks)
+        tasks_header.addWidget(reload_btn)
+        tasks_layout.addLayout(tasks_header)
+
+        self.tasks_table = QTableWidget(0, 4)
+        self.tasks_table.setHorizontalHeaderLabels(["Task #", "Effort", "Status", "Task Description"])
+        self.tasks_table.verticalHeader().setVisible(False)
+        self.tasks_table.verticalHeader().setDefaultSectionSize(38)
+        self.tasks_table.horizontalHeader().setFixedHeight(38)
+        self.tasks_table.horizontalHeader().setMinimumSectionSize(80)
+        self.tasks_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.tasks_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.tasks_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.tasks_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        self.tasks_table.setAlternatingRowColors(True)
+        self.tasks_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.tasks_table.setSelectionMode(QTableWidget.SingleSelection)
+        self.tasks_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        tasks_layout.addWidget(self.tasks_table, 1)
+
+        self.status_summary_label = QLabel("Scanning tasks file...")
+        self.status_summary_label.setObjectName("StatusSummary")
+        tasks_layout.addWidget(self.status_summary_label)
+
+        root_layout.addWidget(tasks_card, 1)
+
+        # 5. Primary Action Bar
+        actions_row = QHBoxLayout()
+        actions_row.setSpacing(10)
+
+        self.run_all_btn = self._make_button(
+            "Run All Pending Tasks",
+            "PrimaryBtn",
+            "play",
+            "#FFFFFF",
+            height=38,
         )
-        title_label.pack(anchor="w")
+        self.run_all_btn.clicked.connect(self._start_all_tasks_interactive)
 
-        subtitle_label = tk.Label(
-            header_frame,
-            text="تشغيل مهام Markdown تسلسلياً مع فتح نافذة طرفية مستقلة لمشاهدة الوكيل حياً عبر agy -i",
-            font=("Segoe UI", 9),
-            bg="#f8fafc",
-            fg="#64748b"
+        self.run_selected_btn = self._make_button(
+            "Run Selected Task",
+            "TealOutlineBtn",
+            "zap",
+            "#0E7471",
+            height=38,
         )
-        subtitle_label.pack(anchor="w")
+        self.run_selected_btn.clicked.connect(self._start_selected_task_interactive)
 
-        # 2. قسم المسارات (Paths Frame)
-        paths_frame = ttk.LabelFrame(main_container, text=" مسارات العمل (Paths) ", padding="10")
-        paths_frame.pack(fill=tk.X, pady=(0, 10))
-        paths_frame.columnconfigure(1, weight=1)
-
-        # مجلد المشروع
-        ttk.Label(paths_frame, text="مجلد المشروع:").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
-        proj_entry = ttk.Entry(paths_frame, textvariable=self.project_dir_var, font=("Segoe UI", 9))
-        proj_entry.grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=4)
-        ttk.Button(paths_frame, text="📁 تصفح...", command=self._browse_project_dir, style="Secondary.TButton").grid(row=0, column=2, pady=4)
-
-        # ملف المهام
-        ttk.Label(paths_frame, text="ملف المهام (Markdown):").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=4)
-        tasks_entry = ttk.Entry(paths_frame, textvariable=self.tasks_file_var, font=("Segoe UI", 9))
-        tasks_entry.grid(row=1, column=1, sticky="ew", padx=(0, 8), pady=4)
-        tasks_entry.bind("<FocusOut>", lambda e: self._reload_tasks())
-        tasks_entry.bind("<Return>", lambda e: self._reload_tasks())
-        ttk.Button(paths_frame, text="📄 تصفح...", command=self._browse_tasks_file, style="Secondary.TButton").grid(row=1, column=2, pady=4)
-
-        # 3. قسم الإعدادات (Settings Frame)
-        settings_frame = ttk.LabelFrame(main_container, text=" إعدادات الجلسة والوكيل (Session & Agent Settings) ", padding="10")
-        settings_frame.pack(fill=tk.X, pady=(0, 10))
-        for col in (1, 3, 5):
-            settings_frame.columnconfigure(col, weight=1)
-
-        # السطر الأول: النموذج، الوضع، الجهد
-        ttk.Label(settings_frame, text="النموذج:").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=4)
-        model_combo = ttk.Combobox(
-            settings_frame,
-            textvariable=self.model_var,
-            values=[
-                "gemini-3.8-flash",
-                "gemini-3.8-flash-medium",
-                "gemini-3.8-flash-high",
-                "gemini-4-argon-medium",
-                "gemini-4-argon-high",
-                "claude-sonnet-5-5-medium",
-                "claude-sonnet-5-5-high",
-                "claude-opus-5-5-medium",
-                "claude-opus-5-5-high",
-                "gpt-oss-120b-medium",
-            ],
-            font=("Segoe UI", 9)
+        self.open_shell_btn = self._make_button(
+            "Open Interactive agy Shell",
+            "SecondaryBtn",
+            "terminal",
+            "#334155",
+            height=38,
         )
-        model_combo.grid(row=0, column=1, sticky="ew", padx=(0, 12), pady=4)
+        self.open_shell_btn.clicked.connect(self._open_direct_agy_shell)
 
-        ttk.Label(settings_frame, text="وضع الوكيل:").grid(row=0, column=2, sticky="w", padx=(0, 6), pady=4)
-        mode_combo = ttk.Combobox(
-            settings_frame,
-            textvariable=self.mode_var,
-            values=["accept-edits", "auto", "plan"],
-            state="readonly",
-            font=("Segoe UI", 9)
-        )
-        mode_combo.grid(row=0, column=3, sticky="ew", padx=(0, 12), pady=4)
+        exit_btn = self._make_button("Exit", "SecondaryBtn", height=38)
+        exit_btn.clicked.connect(self.close)
 
-        ttk.Label(settings_frame, text="جهد التفكير:").grid(row=0, column=4, sticky="w", padx=(0, 6), pady=4)
-        effort_combo = ttk.Combobox(
-            settings_frame,
-            textvariable=self.effort_var,
-            values=["from-task", "low", "medium", "high", "xhigh", "max"],
-            state="readonly",
-            font=("Segoe UI", 9)
-        )
-        effort_combo.grid(row=0, column=5, sticky="ew", pady=4)
+        actions_row.addWidget(self.run_all_btn)
+        actions_row.addWidget(self.run_selected_btn)
+        actions_row.addWidget(self.open_shell_btn)
+        actions_row.addStretch(1)
+        actions_row.addWidget(exit_btn)
 
-        # السطر الثاني: معرف الجلسة (قائمة منسدلة بالجلسات السابقة + إمكانية إدخال أي معرف)
-        ttk.Label(settings_frame, text="معرف الجلسة:").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=4)
-        session_frame = ttk.Frame(settings_frame)
-        session_frame.grid(row=1, column=1, columnspan=3, sticky="ew", padx=(0, 12), pady=4)
-        session_frame.columnconfigure(0, weight=1)
-        self.session_combo = ttk.Combobox(
-            session_frame,
-            textvariable=self.session_id_var,
-            values=self.recent_sessions + ["new"],
-            font=("Segoe UI", 9)
-        )
-        self.session_combo.grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        ttk.Button(session_frame, text="🔄 تحديث", command=self._refresh_sessions_list, style="Secondary.TButton").grid(row=0, column=1, padx=(0, 4))
-        ttk.Button(session_frame, text="🆕 جديد", command=self._generate_new_session, style="Secondary.TButton").grid(row=0, column=2)
+        root_layout.addLayout(actions_row)
 
-        # آلية التشغيل
-        ttk.Label(settings_frame, text="طريقة العرض:").grid(row=1, column=4, sticky="w", padx=(0, 6), pady=4)
-        engine_combo = ttk.Combobox(
-            settings_frame,
-            textvariable=self.exec_engine_var,
-            values=["agy-i", "agy-p"],
-            state="readonly",
-            font=("Segoe UI", 9)
-        )
-        engine_combo.grid(row=1, column=5, sticky="ew", pady=4)
+        # 6. Activity Log Card
+        log_card = self._create_card()
+        log_layout = QVBoxLayout(log_card)
+        log_layout.setContentsMargins(14, 10, 14, 12)
+        log_layout.setSpacing(6)
 
-        # السطر الثالث: خيارات الأمان والمتابعة التلقائية
-        options_frame = ttk.Frame(settings_frame)
-        options_frame.grid(row=2, column=0, columnspan=6, sticky="w", pady=(6, 0))
-        ttk.Checkbutton(
-            options_frame,
-            text="تخطي طلب الأذونات تلقائياً (--dangerously-skip-permissions)",
-            variable=self.skip_permissions_var
-        ).pack(side=tk.LEFT, padx=(0, 16))
+        log_title = QLabel("Activity Log")
+        log_title.setObjectName("SectionTitle")
+        log_layout.addWidget(log_title)
 
-        ttk.Checkbutton(
-            options_frame,
-            text="متابعة تلقائية بين المهام مع عد تنازلي (Auto-Next)",
-            variable=self.auto_next_var
-        ).pack(side=tk.LEFT)
+        self.log_output = QPlainTextEdit()
+        self.log_output.setObjectName("ActivityLog")
+        self.log_output.setReadOnly(True)
+        self.log_output.setFixedHeight(105)
+        log_layout.addWidget(self.log_output)
 
-        # 4. قسم استعراض المهام (Tasks Preview Table)
-        tasks_group = ttk.LabelFrame(main_container, text=" قائمة المهام المستخرجة (Tasks List) ", padding="10")
-        tasks_group.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+        root_layout.addWidget(log_card)
 
-        # جدول Treeview مع شريط تمرير
-        table_container = ttk.Frame(tasks_group)
-        table_container.pack(fill=tk.BOTH, expand=True)
+    def _initialize_defaults(self) -> None:
+        cwd = Path(os.getcwd())
+        self.project_dir_edit.setText(str(cwd))
 
-        columns = ("id", "effort", "status", "preview")
-        self.tree = ttk.Treeview(table_container, columns=columns, show="headings", selectmode="browse")
-        self.tree.heading("id", text="المهمة (#)")
-        self.tree.heading("effort", text="الجهد")
-        self.tree.heading("status", text="الحالة")
-        self.tree.heading("preview", text="نص المهمة المطلوب تنفيذها")
+        tasks_path = "TASKS.md"
+        for candidate_name in ("TASKS.md", "tasks.md", "docs/tasks.md", "docs/TASKS.md"):
+            cand = cwd / candidate_name
+            if cand.is_file():
+                tasks_path = str(cand)
+                break
+        self.tasks_file_edit.setText(tasks_path)
 
-        self.tree.column("id", width=80, anchor="center")
-        self.tree.column("effort", width=95, anchor="center")
-        self.tree.column("status", width=140, anchor="center")
-        self.tree.column("preview", width=580, anchor="w")
+        self._populate_models_combo(FALLBACK_MODELS)
+        self._populate_sessions_combo()
 
-        self.tree.tag_configure("completed", foreground="#16a34a", background="#f0fdf4")
-        self.tree.tag_configure("pending", foreground="#0f172a", background="#ffffff")
+    def _populate_models_combo(self, models: List[ModelInfo]) -> None:
+        current_id = self._get_selected_model_id() or DEFAULT_MODEL
+        self.model_combo.blockSignals(True)
+        self.model_combo.clear()
+        selected_idx = -1
+        for idx, m in enumerate(models):
+            label = f"{m['display_name']}  [{m['id']}]"
+            self.model_combo.addItem(label, userData=m["id"])
+            if m["id"] == current_id:
+                selected_idx = idx
+        if selected_idx >= 0:
+            self.model_combo.setCurrentIndex(selected_idx)
+        elif self.model_combo.count() > 0:
+            self.model_combo.setCurrentIndex(0)
+        self.model_combo.blockSignals(False)
 
-        scrollbar = ttk.Scrollbar(table_container, orient=tk.VERTICAL, command=self.tree.yview)
-        self.tree.configure(yscrollcommand=scrollbar.set)
+    def _get_selected_model_id(self) -> str:
+        idx = self.model_combo.currentIndex()
+        if idx >= 0:
+            item_data = self.model_combo.itemData(idx, Qt.UserRole)
+            item_text = self.model_combo.itemText(idx)
+            if item_data and self.model_combo.currentText() == item_text:
+                return str(item_data).strip()
+        raw = self.model_combo.currentText().strip()
+        if raw.endswith("]") and "[" in raw:
+            return raw.rsplit("[", 1)[-1].rstrip("]").strip()
+        return raw or DEFAULT_MODEL
 
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    def _refresh_models_async(self) -> None:
+        if self._model_thread is not None and self._model_thread.isRunning():
+            return
+        self.refresh_models_btn.setEnabled(False)
+        self.refresh_models_btn.setToolTip("Fetching models from `agy models`...")
+        self._model_thread = ModelLoaderThread(self)
+        self._model_thread.models_loaded.connect(self._on_models_loaded)
+        self._model_thread.start()
 
-        # شريط إحصائيات المهام أسفل الجدول
-        stats_frame = ttk.Frame(tasks_group)
-        stats_frame.pack(fill=tk.X, pady=(6, 0))
-        self.stats_label = tk.Label(
-            stats_frame,
-            textvariable=self.status_summary_var,
-            font=("Segoe UI", 9, "bold"),
-            bg="#f8fafc",
-            fg="#2563eb"
-        )
-        self.stats_label.pack(side=tk.LEFT)
-
-        ttk.Button(
-            stats_frame,
-            text="🔄 إعادة قراءة الملف",
-            command=self._reload_tasks,
-            style="Secondary.TButton"
-        ).pack(side=tk.RIGHT)
-
-        # 5. شريط أزرار التشغيل والتحكم (Action Buttons)
-        actions_frame = ttk.Frame(main_container)
-        actions_frame.pack(fill=tk.X, pady=(4, 8))
-
-        # الزر الرئيسي: إطلاق طرفية agy -i التفاعلية الحية
-        run_all_btn = ttk.Button(
-            actions_frame,
-            text="▶ (agy -i) بدء تشغيل المهام التفاعلية",
-            command=self._start_all_tasks_interactive,
-            style="Primary.TButton"
-        )
-        run_all_btn.pack(side=tk.LEFT, padx=(0, 8))
-
-        # تشغيل المهمة المحددة فقط
-        run_single_btn = ttk.Button(
-            actions_frame,
-            text="⚡ تشغيل المهمة المحددة فقط",
-            command=self._start_selected_task_interactive,
-            style="AccentGreen.TButton"
-        )
-        run_single_btn.pack(side=tk.LEFT, padx=(0, 8))
-
-        # فتح طرفية agy تفاعلية مباشرة
-        shell_btn = ttk.Button(
-            actions_frame,
-            text="💻 فتح طرفية agy تفاعلية",
-            command=self._open_direct_agy_shell,
-            style="Secondary.TButton"
-        )
-        shell_btn.pack(side=tk.LEFT, padx=(0, 8))
-
-        # زر إغلاق
-        close_btn = ttk.Button(
-            actions_frame,
-            text="خروج",
-            command=self.root.destroy,
-            style="Secondary.TButton"
-        )
-        close_btn.pack(side=tk.RIGHT)
-
-        # 6. قسم سجل النشاط والمتابعة الحية داخل الواجهة (Live Activity Log)
-        log_group = ttk.LabelFrame(main_container, text=" سجل النشاط ومتابعة التنفيذ (Live Log) ", padding="6")
-        log_group.pack(fill=tk.X, pady=(0, 0))
-
-        log_container = ttk.Frame(log_group)
-        log_container.pack(fill=tk.BOTH, expand=True)
-
-        self.log_text = tk.Text(
-            log_container,
-            height=4,
-            bg="#0f172a",
-            fg="#38bdf8",
-            insertbackground="#ffffff",
-            font=("Consolas", 9),
-            wrap=tk.WORD
-        )
-        log_scrollbar = ttk.Scrollbar(log_container, orient=tk.VERTICAL, command=self.log_text.yview)
-        self.log_text.configure(yscrollcommand=log_scrollbar.set)
-
-        self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        log_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-    def _log_message(self, msg: str) -> None:
-        """إضافة سطر جديد إلى سجل النشاط المباشر."""
-        now_str = datetime.datetime.now().strftime("%H:%M:%S")
-        self.log_text.insert(tk.END, f"[{now_str}] {msg}\n")
-        self.log_text.see(tk.END)
-
-    def _browse_project_dir(self) -> None:
-        """اختيار مجلد المشروع عبر نافذة التصفح."""
-        chosen = filedialog.askdirectory(
-            initialdir=self.project_dir_var.get() or os.getcwd(),
-            title="اختر مجلد المشروع"
-        )
-        if chosen:
-            self.project_dir_var.set(chosen)
-            # فحص تلقائي لملفات المهام داخل المجلد الجديد
-            cand_paths = [
-                Path(chosen) / "TASKS.md",
-                Path(chosen) / "tasks.md",
-                Path(chosen) / "docs" / "tasks.md",
-                Path(chosen) / "docs" / "TASKS.md",
-            ]
-            for cand in cand_paths:
-                if cand.is_file():
-                    self.tasks_file_var.set(str(cand))
-                    break
-            self._reload_tasks()
-
-    def _browse_tasks_file(self) -> None:
-        """اختيار ملف المهام بصيغة Markdown عبر نافذة التصفح."""
-        initial_dir = self.project_dir_var.get() or os.getcwd()
-        chosen = filedialog.askopenfilename(
-            initialdir=initial_dir,
-            title="اختر ملف المهام",
-            filetypes=[
-                ("Markdown Files", "*.md"),
-                ("Text Files", "*.txt"),
-                ("All Files", "*.*")
-            ]
-        )
-        if chosen:
-            self.tasks_file_var.set(chosen)
-            self._reload_tasks()
+    def _on_models_loaded(self, models: list, is_live: bool) -> None:
+        self.refresh_models_btn.setEnabled(True)
+        self.refresh_models_btn.setToolTip("Refresh live models from `agy models`")
+        if models:
+            self._populate_models_combo(models)
+        if is_live:
+            self._log_message(f"Loaded {len(models)} live model(s) from `agy models`.")
+        else:
+            self._log_message("Could not reach `agy models`; using built-in fallback model list.")
 
     def _discover_recent_sessions(self) -> List[str]:
-        """استكشاف أحدث جلسات المحادثات الموجودة في مجلد brain الخاص بـ agy."""
         brain_dir = get_agy_brain_dir()
         if not brain_dir.is_dir():
             return []
 
-        sessions_with_mtime: List[tuple[float, str]] = []
+        sessions_with_mtime: List[Tuple[float, str]] = []
         try:
             for child in brain_dir.iterdir():
                 if not child.is_dir():
@@ -440,22 +603,59 @@ class AntigravityTaskRunnerUI:
         sessions_with_mtime.sort(key=lambda item: item[0], reverse=True)
         return [sid for _, sid in sessions_with_mtime[:25]]
 
+    def _populate_sessions_combo(self) -> None:
+        current = self.session_combo.currentText().strip()
+        self.session_combo.clear()
+        items = self.recent_sessions + ["new"]
+        self.session_combo.addItems(items)
+        if current:
+            self.session_combo.setCurrentText(current)
+        elif items:
+            self.session_combo.setCurrentIndex(0)
+
     def _refresh_sessions_list(self) -> None:
-        """تحديث قائمة الجلسات السابقة من مجلد محادثات agy."""
         self.recent_sessions = self._discover_recent_sessions()
-        if hasattr(self, "session_combo"):
-            self.session_combo["values"] = self.recent_sessions + ["new"]
-        self._log_message(f"تم تحديث قائمة الجلسات المتاحة ({len(self.recent_sessions)} جلسة).")
+        self._populate_sessions_combo()
+        self._log_message(f"Refreshed session list ({len(self.recent_sessions)} session(s) found).")
 
     def _generate_new_session(self) -> None:
-        """تحديد بدء جلسة جديدة موحدة."""
-        self.session_id_var.set("new")
-        self._log_message("تم ضبط الجلسة على (new) لإنشاء جلسة حية جديدة موحدة عند بدء التنفيذ.")
+        self.session_combo.setCurrentText("new")
+        self._log_message("Session set to 'new' — a unified live session will be created on launch.")
 
-    def _resolve_paths(self) -> tuple[Optional[Path], Optional[Path]]:
-        """التحقق من المسارات وإرجاع كائنات Path صالحة."""
-        p_dir_str = self.project_dir_var.get().strip()
-        t_file_str = self.tasks_file_var.get().strip()
+    def _log_message(self, msg: str) -> None:
+        now_str = datetime.datetime.now().strftime("%H:%M:%S")
+        self.log_output.appendPlainText(f"[{now_str}] {msg}")
+
+    def _browse_project_dir(self) -> None:
+        chosen = QFileDialog.getExistingDirectory(
+            self,
+            "Select Project Directory",
+            self.project_dir_edit.text().strip() or os.getcwd(),
+        )
+        if chosen:
+            self.project_dir_edit.setText(chosen)
+            for rel in ("TASKS.md", "tasks.md", "docs/tasks.md", "docs/TASKS.md"):
+                cand = Path(chosen) / rel
+                if cand.is_file():
+                    self.tasks_file_edit.setText(str(cand))
+                    break
+            self._reload_tasks()
+
+    def _browse_tasks_file(self) -> None:
+        initial_dir = self.project_dir_edit.text().strip() or os.getcwd()
+        chosen, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Tasks File",
+            initial_dir,
+            "Markdown Files (*.md);;Text Files (*.txt);;All Files (*.*)",
+        )
+        if chosen:
+            self.tasks_file_edit.setText(chosen)
+            self._reload_tasks()
+
+    def _resolve_paths(self) -> Tuple[Optional[Path], Optional[Path]]:
+        p_dir_str = self.project_dir_edit.text().strip()
+        t_file_str = self.tasks_file_edit.text().strip()
 
         if not p_dir_str:
             return None, None
@@ -473,15 +673,11 @@ class AntigravityTaskRunnerUI:
         return proj_path, tasks_path
 
     def _reload_tasks(self) -> None:
-        """قراءة ملف المهام وتحديث جدول العرض والإحصائيات."""
-        proj_path, tasks_path = self._resolve_paths()
-
-        # مسح العناصر الحالية من الجدول
-        for item in self.tree.get_children():
-            self.tree.delete(item)
+        _, tasks_path = self._resolve_paths()
+        self.tasks_table.setRowCount(0)
 
         if not tasks_path or not tasks_path.is_file():
-            self.status_summary_var.set("⚠️ ملف المهام غير موجود أو لم يتم تحديده بعد.")
+            self.status_summary_label.setText("Tasks file not found or not selected.")
             self.pending_tasks = []
             self.completed_task_ids = []
             return
@@ -492,78 +688,96 @@ class AntigravityTaskRunnerUI:
             self.pending_tasks = pending
             self.completed_task_ids = skipped
 
-            # إضافة المهام المعلقة
+            total_rows = len(pending) + len(skipped)
+            self.tasks_table.setRowCount(total_rows)
+
+            row = 0
             for t in pending:
                 first_line = t["content"].splitlines()[0] if t["content"] else ""
-                preview = first_line[:95] + ("..." if len(first_line) > 95 else "")
-                self.tree.insert(
-                    "",
-                    tk.END,
-                    iid=f"task_{t['id']}",
-                    values=(f"#{t['id']}", t["effort"].upper(), "⏳ قيد الانتظار", preview),
-                    tags=("pending",)
-                )
+                preview = first_line[:110] + ("..." if len(first_line) > 110 else "")
 
-            # إضافة المهام المكتملة
+                id_item = QTableWidgetItem(f"#{t['id']}")
+                id_item.setTextAlignment(Qt.AlignCenter)
+                id_item.setData(Qt.UserRole, t["id"])
+
+                effort_item = QTableWidgetItem(t["effort"].upper())
+                effort_item.setTextAlignment(Qt.AlignCenter)
+
+                status_item = QTableWidgetItem(get_icon("clock", size=14, color="#D97706"), "Pending")
+                status_item.setForeground(QColor("#B45309"))
+
+                desc_item = QTableWidgetItem(preview)
+
+                self.tasks_table.setItem(row, 0, id_item)
+                self.tasks_table.setItem(row, 1, effort_item)
+                self.tasks_table.setItem(row, 2, status_item)
+                self.tasks_table.setItem(row, 3, desc_item)
+                row += 1
+
+            completed_bg = QColor("#F0FDF4")
+            completed_fg = QColor("#15803D")
+            bold_font = QFont()
+            bold_font.setBold(True)
+
             for cid in skipped:
-                self.tree.insert(
-                    "",
-                    tk.END,
-                    iid=f"task_{cid}",
-                    values=(f"#{cid}", "-", "✔ مكتملة [COMPLETED]", "(تم إنجازها مسبقاً)"),
-                    tags=("completed",)
-                )
+                id_item = QTableWidgetItem(f"#{cid}")
+                id_item.setTextAlignment(Qt.AlignCenter)
+                id_item.setData(Qt.UserRole, cid)
 
-            total = len(pending) + len(skipped)
-            summary_msg = f"📊 إجمالي المهام: {total}  |  ⏳ قيد الانتظار: {len(pending)}  |  ✔ مكتملة: {len(skipped)}"
-            self.status_summary_var.set(summary_msg)
+                effort_item = QTableWidgetItem("-")
+                effort_item.setTextAlignment(Qt.AlignCenter)
 
+                status_item = QTableWidgetItem(get_icon("check_circle", size=14, color="#16A34A"), "Completed")
+                status_item.setForeground(completed_fg)
+                status_item.setFont(bold_font)
+
+                desc_item = QTableWidgetItem("(Previously completed)")
+                desc_item.setForeground(QColor("#64748B"))
+
+                for col_idx, item in enumerate((id_item, effort_item, status_item, desc_item)):
+                    item.setBackground(completed_bg)
+                    self.tasks_table.setItem(row, col_idx, item)
+                row += 1
+
+            self.status_summary_label.setText(
+                f"Total: {total_rows}  |  Pending: {len(pending)}  |  Completed: {len(skipped)}"
+            )
         except Exception as err:
-            self.status_summary_var.set(f"❌ خطأ أثناء تحليل ملف المهام: {err}")
-            self._log_message(f"خطأ في تحليل ملف المهام: {err}")
+            self.status_summary_label.setText(f"Error parsing tasks file: {err}")
+            self._log_message(f"Error parsing tasks file: {err}")
 
     def _auto_poll_tasks(self) -> None:
-        """استطلاع دوري للملف لتحديث الجدول تلقائياً إذا تغير الملف في الخلفية."""
         _, tasks_path = self._resolve_paths()
         if tasks_path and tasks_path.is_file():
             try:
                 current_mtime = tasks_path.stat().st_mtime
                 if current_mtime != self.last_tasks_mtime:
-                    self._log_message(f"تم رصد تحديث في ملف المهام ({tasks_path.name})، جاري تحديث الجدول...")
+                    self._log_message(f"Detected changes in {tasks_path.name}; reloading tasks...")
                     self._reload_tasks()
             except Exception:
                 pass
 
-        self.root.after(2000, self._auto_poll_tasks)
-
     def _launch_worker_process(self, specific_task_id: Optional[str] = None) -> None:
-        """
-        إطلاق معالج المهام التفاعلي في نافذة طرفية مستقلة وظاهرة في المقدمة لعرض agy -i حياً.
-        """
         proj_path, tasks_path = self._resolve_paths()
 
         if not proj_path or not proj_path.is_dir():
-            messagebox.showerror("خطأ في المسار", f"مجلد المشروع غير موجود:\n{proj_path}")
+            QMessageBox.critical(self, "Invalid Directory", f"Project directory not found:\n{proj_path}")
             return
 
         if not tasks_path or not tasks_path.is_file():
-            messagebox.showerror("خطأ في الملف", f"ملف المهام غير موجود:\n{tasks_path}")
+            QMessageBox.critical(self, "Invalid File", f"Tasks file not found:\n{tasks_path}")
             return
 
-        session_id = self.session_id_var.get().strip() or f"agy-session-{uuid.uuid4().hex[:10]}"
-        model = self.model_var.get().strip() or DEFAULT_MODEL
-        mode = self.mode_var.get().strip() or "accept-edits"
-        effort = self.effort_var.get().strip() or "from-task"
-        skip_perm = self.skip_permissions_var.get()
-        auto_next = self.auto_next_var.get()
+        session_id = self.session_combo.currentText().strip() or f"agy-session-{uuid.uuid4().hex[:10]}"
+        model = self._get_selected_model_id()
+        mode = self.mode_combo.currentText().strip() or "accept-edits"
+        effort = self.effort_combo.currentText().strip() or "from-task"
 
-        target_desc = f"المهمة #{specific_task_id}" if specific_task_id else "جميع المهام المعلقة"
+        target_desc = f"Task #{specific_task_id}" if specific_task_id else "all pending tasks"
 
-        # الحصول على المسار المطلق الدقيق لسكربت interactive_worker.py ومجلد المستودع
         worker_script = Path(__file__).resolve().parent / "interactive_worker.py"
         repo_root = Path(__file__).resolve().parent.parent
 
-        # بناء معاملات تشغيل سكربت العامل التفاعلي مباشرة عبر مساره لضمان عمله في أي بيئة ومجلد
         worker_args = [
             f'"{sys.executable}"',
             f'"{worker_script}"',
@@ -574,28 +788,18 @@ class AntigravityTaskRunnerUI:
             "--mode", f'"{mode}"',
             "--effort", f'"{effort}"',
         ]
-
-        if skip_perm:
-            worker_args.append("--dangerously-skip-permissions")
-
-        if not auto_next:
-            worker_args.append("--no-auto-next")
-
         if specific_task_id:
             worker_args.extend(["--task-id", f'"{specific_task_id}"'])
 
         try:
             if sys.platform == "win32":
-                # استخدام start cmd.exe /k لضمان فتح نافذة طرفية Command Prompt مستقلة ومرئية في المقدمة وبقائها مفتوحة
                 win_title = f"Antigravity Live Runner - {target_desc} [{session_id}]"
-                inner_cmd = f'chcp 65001 >nul && set "PYTHONPATH={repo_root};%PYTHONPATH%" && ' + " ".join(worker_args)
-                spawn_cmd = f'start "{win_title}" cmd.exe /k "{inner_cmd}"'
-
-                subprocess.Popen(
-                    spawn_cmd,
-                    shell=True,
-                    cwd=str(proj_path)
+                inner_cmd = (
+                    f'chcp 65001 >nul && set "PYTHONPATH={repo_root};%PYTHONPATH%" && '
+                    + " ".join(worker_args)
                 )
+                spawn_cmd = f'start "{win_title}" cmd.exe /k "{inner_cmd}"'
+                subprocess.Popen(spawn_cmd, shell=True, cwd=str(proj_path))
             else:
                 creationflags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
                 cmd_list = [
@@ -608,72 +812,61 @@ class AntigravityTaskRunnerUI:
                     "--mode", mode,
                     "--effort", effort,
                 ]
-                if skip_perm:
-                    cmd_list.append("--dangerously-skip-permissions")
-                if not auto_next:
-                    cmd_list.append("--no-auto-next")
                 if specific_task_id:
                     cmd_list.extend(["--task-id", str(specific_task_id)])
 
                 env = os.environ.copy()
                 env["PYTHONPATH"] = f"{repo_root}{os.pathsep}{env.get('PYTHONPATH', '')}"
+                subprocess.Popen(cmd_list, cwd=str(proj_path), env=env, creationflags=creationflags)
 
-                subprocess.Popen(
-                    cmd_list,
-                    cwd=str(proj_path),
-                    env=env,
-                    creationflags=creationflags
-                )
-
-            self.status_summary_var.set(f"🚀 تم فتح نافذة الطرفية الحية لـ {target_desc} عبر agy -i.")
-            self._log_message(f"تم إطلاق نافذة طرفية مستقلة لـ {target_desc}.")
-            self._log_message(f"شاهد عمل الوكيل مباشرة في نافذة الطرفية المفتوحة أمامك الآن.")
+            self.status_summary_label.setText(f"Launched live terminal for {target_desc}.")
+            self._log_message(f"Launched live agy runner for {target_desc} (Model: {model}, Session: {session_id}).")
 
         except Exception as e:
-            messagebox.showerror("فشل التشغيل", f"تعذر إطلاق نافذة الطرفية:\n{e}")
-            self._log_message(f"خطأ أثناء إطلاق الطرفية: {e}")
+            QMessageBox.critical(self, "Launch Failed", f"Could not launch terminal:\n{e}")
+            self._log_message(f"Failed to launch terminal: {e}")
 
     def _start_all_tasks_interactive(self) -> None:
-        """بدء تنفيذ جميع المهام المعلقة تفاعلياً."""
         if not self.pending_tasks:
-            messagebox.showinfo("تنبيه", "لا توجد مهام معلقة للتنفيذ في الملف الحالي!")
+            QMessageBox.information(self, "No Pending Tasks", "All tasks in the current file are already completed.")
             return
         self._launch_worker_process(specific_task_id=None)
 
     def _start_selected_task_interactive(self) -> None:
-        """بدء تنفيذ المهمة المحددة فقط من الجدول."""
-        selected = self.tree.selection()
-        if not selected:
-            messagebox.showwarning("تنبيه", "يرجى تحديد مهمة من الجدول أولاً بالنقر عليها.")
+        row = self.tasks_table.currentRow()
+        if row < 0:
+            QMessageBox.warning(self, "No Selection", "Please select a task row from the table first.")
             return
-
-        item_id = selected[0]
-        task_id = item_id.replace("task_", "")
+        id_item = self.tasks_table.item(row, 0)
+        if not id_item:
+            return
+        task_id = str(id_item.data(Qt.UserRole) or id_item.text().lstrip("#"))
         self._launch_worker_process(specific_task_id=task_id)
 
     def _open_direct_agy_shell(self) -> None:
-        """فتح نافذة طرفية تفاعلية حرة لـ agy في مجلد المشروع."""
         proj_path, _ = self._resolve_paths()
         if not proj_path or not proj_path.is_dir():
-            messagebox.showerror("خطأ", "يرجى تحديد مجلد مشروع صالح أولاً.")
+            QMessageBox.critical(self, "Invalid Directory", "Please select a valid project directory first.")
             return
 
-        session_id = self.session_id_var.get().strip()
-        raw_model = self.model_var.get().strip() or DEFAULT_MODEL
-        raw_effort = self.effort_var.get().strip() or "medium"
+        session_id = self.session_combo.currentText().strip()
+        raw_model = self._get_selected_model_id()
+        raw_effort = self.effort_combo.currentText().strip() or "medium"
         resolved_model, _ = resolve_agy_model_and_effort(raw_model, raw_effort)
-        mode = self.mode_var.get().strip() or "accept-edits"
+        mode = self.mode_combo.currentText().strip() or "accept-edits"
         agy_executable = shutil.which("agy") or "agy"
-        session_exists = bool(session_id and session_id != "new" and (get_agy_brain_dir() / session_id).is_dir())
+        session_exists = bool(
+            session_id and session_id != "new" and (get_agy_brain_dir() / session_id).is_dir()
+        )
 
         try:
             if sys.platform == "win32":
                 win_title = f"Antigravity Interactive Shell [{session_id or 'new'}]"
                 conv_arg = f"--conversation {session_id} " if session_exists else ""
-                perm_arg = " --dangerously-skip-permissions" if self.skip_permissions_var.get() else ""
                 inner_cmd = (
                     f'chcp 65001 >nul && "{agy_executable}" {conv_arg}'
-                    f'--add-dir "{proj_path}" --model {resolved_model} --mode {mode}{perm_arg}'
+                    f'--add-dir "{proj_path}" --model {resolved_model} --mode {mode} '
+                    f'--dangerously-skip-permissions'
                 )
                 spawn_cmd = f'start "{win_title}" cmd.exe /k "{inner_cmd}"'
                 subprocess.Popen(spawn_cmd, shell=True, cwd=str(proj_path))
@@ -682,27 +875,33 @@ class AntigravityTaskRunnerUI:
                 cmd_list = [agy_executable]
                 if session_exists:
                     cmd_list.extend(["--conversation", session_id])
-                cmd_list.extend(["--add-dir", str(proj_path), "--model", resolved_model, "--mode", mode])
-                if self.skip_permissions_var.get():
-                    cmd_list.append("--dangerously-skip-permissions")
-                subprocess.Popen(
-                    cmd_list,
-                    cwd=str(proj_path),
-                    creationflags=creationflags
-                )
+                cmd_list.extend([
+                    "--add-dir", str(proj_path),
+                    "--model", resolved_model,
+                    "--mode", mode,
+                    "--dangerously-skip-permissions",
+                ])
+                subprocess.Popen(cmd_list, cwd=str(proj_path), creationflags=creationflags)
 
-            self._log_message(f"تم فتح طرفية agy تفاعلية حرة في: {proj_path}")
-
+            self._log_message(f"Opened interactive agy shell in: {proj_path} (Model: {resolved_model})")
         except Exception as e:
-            messagebox.showerror("خطأ", f"تعذر فتح الطرفية: {e}")
-            self._log_message(f"خطأ في فتح طرفية agy: {e}")
+            QMessageBox.critical(self, "Launch Failed", f"Could not open agy shell:\n{e}")
+            self._log_message(f"Failed to open agy shell: {e}")
 
 
 def launch_ui() -> None:
-    """نقطة الدخول الرئيسية لتشغيل واجهة المستخدم الرسومية."""
-    root = tk.Tk()
-    app = AntigravityTaskRunnerUI(root)
-    root.mainloop()
+    """Launch the PySide6 desktop GUI."""
+    app = QApplication.instance()
+    owns_app = app is None
+    if owns_app:
+        app = QApplication(sys.argv)
+    app.setStyleSheet(APP_STYLESHEET)
+
+    window = AntigravityTaskRunnerUI()
+    window.show()
+
+    if owns_app:
+        sys.exit(app.exec())
 
 
 if __name__ == "__main__":

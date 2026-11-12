@@ -1,36 +1,31 @@
-# دليل مجلد الحزمة `agytask/`
+# `agytask/` Package Directory
 
-يحتوي هذا المجلد على الشيفرة المصدرية الأساسية لحزمة وأداة `agytask`.
+This directory contains the core source code for the `agytask` package and CLI/GUI runner.
 
-## الملفات ومسؤولياتها:
+## Files & Responsibilities
 
 1. **`__init__.py`**:
-   - نقطة التصدير المركزية للمكتبة (`Public API`).
-   - تصدير الدوال الأساسية مثل `run_tasks` و `execute_task` و `parse_tasks_file` و `run_interactive_pipeline` و `launch_ui` ورقم الإصدار `__version__`.
+   - Public Python API exports (`run_tasks`, `execute_task`, `run_stream_command`, `run_interactive_pipeline`, `launch_ui`, `AntigravityTaskRunnerUI`, `parse_tasks_file`, `mark_task_as_completed`, `clean_to_absolute_path`, `fetch_available_models`, `resolve_agy_model_and_effort`, `DEFAULT_MODEL`, `__version__`).
 
-2. **`ui.py`**:
-   - واجهة المستخدم الرسومية (GUI) المبنية باستخدام مكتبة `tkinter` و `ttk`.
-   - توفير نافذة متكاملة لاختيار مجلد المشروع وملف المهام وإعدادات النموذج والوكيل والجلسة (مع استكشاف تلقائي لأحدث جلسات `agy` من مجلد `brain`).
-   - استعراض جدول تفاعلي للمهام المستخرجة (معلقة ومكتملة) مع تحديث واستطلاع حي للحالة.
-   - تشغيل مباشر لنافذة طرفية تفاعلية حية لـ `agy` لتنفيذ المهام ومراقبة الوكيل وهو يعمل.
+2. **`models.py`**:
+   - Live model discovery by invoking `agy models` (`fetch_available_models`, `parse_agy_models_output`) with a built-in fallback list (`FALLBACK_MODELS`).
+   - Model/effort resolution (`resolve_agy_model_and_effort`) to align model IDs and reasoning tiers with `agy` CLI.
 
-3. **`interactive_worker.py`**:
-   - المشغّل التفاعلي المباشر الذي يفتح جلسة `agy` الحية في المحادثة المحددة دون إنشاء محادثة عشوائية جديدة.
-   - حقن المهام تسلسلياً بشكل آلي في حقل إدخال الطرفية التفاعلية عبر `WriteConsoleInputW` (`CONIN$`).
-   - مراقبة سجل المحادثة (`transcript.jsonl`) لاكتشاف اكتمال كل مهمة تلقائياً، وتحديث حالتها إلى `[COMPLETED]` في ملف المهام، ثم إرسال المهمة التالية تلقائياً في نفس الجلسة.
+3. **`icons.py`**:
+   - Crisp vector SVG icon renderer (`get_icon`, `get_pixmap`) using `PySide6.QtSvg.QSvgRenderer`.
 
-4. **`parser.py`**:
-   - معالجة وفحص المسارات وتحويلها إلى مسارات مطلقة نظيفة عبر `clean_to_absolute_path`.
-   - قراءة وتحليل ملف المهام Markdown واستخراج المهام الجاهزة للتنفيذ والمكتملة (`[COMPLETED]` / `[DONE]` / `[مكتملة]`) عبر `parse_tasks_file`.
-   - التحديث الآمن لملف المهام وإضافة وسم `[COMPLETED]` للمهام المنجزة عبر `mark_task_as_completed`.
+4. **`ui.py`**:
+   - Modern PySide6 desktop GUI (`AntigravityTaskRunnerUI`, `launch_ui`) for selecting the project directory, Markdown tasks file, live models, agent mode, effort, and session ID.
+   - Displays a live-polling task table (`QTableWidget`) and activity log (`QPlainTextEdit`), with auto-approve permissions (`--dangerously-skip-permissions`) and auto-continue always enabled.
 
-5. **`runner.py`**:
-   - تنفيذ أوامر الطرفية الفرعية وبث المخرجات لحظياً عبر `run_stream_command`.
-   - إدارة جلسات محادثة Antigravity، والتعافي التلقائي عند انقطاع أو فشل المهام عبر `execute_task`.
-   - توفير الدالة البرمجية العليا `run_tasks` لتشغيل المهام تسلسلياً وإرجاع إحصائيات التنفيذ.
-   - التعامل الآمن مع إشارات المقاطعة `Ctrl+C` / `SIGINT` لإنهاء العمليات الفرعية دون تلف الملفات.
+5. **`interactive_worker.py`**:
+   - Live interactive orchestrator that launches `agy` in the target conversation, injects tasks sequentially via `WriteConsoleInputW` (`CONIN$`), monitors `transcript.jsonl` for turn completion, marks tasks `[COMPLETED]`, and automatically dispatches the next task.
 
-6. **`cli.py`**:
-   - توفير واجهة سطر الأوامر (CLI UX) المبنية على مكتبة `click`.
-   - دعم خيارات التشغيل الرسومي (`--gui` / `--ui`) والوضع التفاعلي المباشر (`-i` / `--interactive`).
-   - دعم الخيارات والرايات (`Flags`) مع قيم افتراضية واضحة ودعم الوضع التفاعلي عند عدم تمريرها.
+6. **`parser.py`**:
+   - Path normalization (`clean_to_absolute_path`), Markdown task parsing (`parse_tasks_file`), and atomic completion marking (`mark_task_as_completed`).
+
+7. **`runner.py`**:
+   - Non-interactive subprocess streaming (`run_stream_command`), automatic retry/recovery (`execute_task`), and sequential pipeline execution (`run_tasks`).
+
+8. **`cli.py`**:
+   - Click-based command-line interface (`agytask`) supporting `--ui` / `--gui`, `-i` / `--interactive`, `--task-id`, `--model`, `--mode`, `--effort`, `--session`, and `-y` / `--yes`.

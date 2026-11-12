@@ -1,5 +1,5 @@
 """
-cli.py - معالجة مدخلات سطر الأوامر (CLI UX) ودعم التشغيل الرسومي (Tkinter UI) والوضع التفاعلي (agy -i).
+cli.py - Command-line interface (CLI) with PySide6 GUI and live interactive (agy) support.
 """
 
 import sys
@@ -9,92 +9,93 @@ from typing import Optional
 
 import click
 
+from .models import DEFAULT_MODEL
 from .parser import clean_to_absolute_path
-from .runner import run_tasks, DEFAULT_MODEL
+from .runner import run_tasks
 
 
 @click.command(
     name="agytask",
     context_settings={"help_option_names": ["-h", "--help"]},
-    help="أداة سطر أوامر احترافية لأتمتة وتشغيل مهام Antigravity من ملفات Markdown."
+    help="Automated task runner for executing Antigravity Markdown task pipelines.",
 )
 @click.option(
     "-p", "--project-dir",
     type=str,
     default=".",
     show_default=True,
-    help="مسار مجلد المشروع (الافتراضي: المجلد الحالي)."
+    help="Path to the target project directory.",
 )
 @click.option(
     "-f", "--tasks-file",
     type=str,
     default="TASKS.md",
     show_default=True,
-    help="مسار ملف المهام بصيغة Markdown."
+    help="Path to the Markdown tasks file.",
 )
 @click.option(
     "-s", "--session",
     type=str,
     default=None,
-    help="معرف الجلسة (Session / Conversation ID). عند عدم التمرير يتم توليد UUID افتراضي."
+    help="Conversation / Session ID. Generates a new UUID if omitted.",
 )
 @click.option(
     "-m", "--model",
     type=str,
     default=DEFAULT_MODEL,
     show_default=True,
-    help="اسم النموذج المستخدم لتنفيذ المهام مع agy."
+    help="Model ID to use with agy.",
 )
 @click.option(
     "--mode",
     type=click.Choice(["accept-edits", "auto", "plan"]),
     default="accept-edits",
     show_default=True,
-    help="وضع تشغيل الوكيل (Agent Execution Mode)."
+    help="Agent execution mode.",
 )
 @click.option(
     "--effort",
     type=str,
     default="from-task",
     show_default=True,
-    help="جهد التفكير (low, medium, high, xhigh, max أو from-task)."
+    help="Reasoning effort override (low, medium, high, xhigh, max, or from-task).",
 )
 @click.option(
     "-i", "--interactive",
     is_flag=True,
     default=False,
-    help="تشغيل المهام حياً وبشكل مرئي عبر واجهة agy -i التفاعلية."
+    help="Run tasks sequentially inside the live interactive agy TUI.",
 )
 @click.option(
     "--task-id",
     type=str,
     default=None,
-    help="تنفيذ مهمة محددة فقط برقمها."
+    help="Execute only a specific task by its numeric ID.",
 )
 @click.option(
     "--gui", "--ui",
     "launch_gui",
     is_flag=True,
     default=False,
-    help="فتح واجهة المستخدم الرسومية (Tkinter UI)."
+    help="Launch the PySide6 desktop GUI.",
 )
 @click.option(
     "--retries",
     type=int,
     default=2,
     show_default=True,
-    help="عدد محاولات التعافي وإعادة المحاولة في حال فشل أي مهمة."
+    help="Number of automatic recovery retries if a task fails.",
 )
 @click.option(
     "-y", "--yes",
     is_flag=True,
     default=False,
-    help="تخطي طلبات التأكيد والبدء المباشر بالتنفيذ."
+    help="Skip confirmation prompts and start execution immediately.",
 )
 @click.version_option(
-    version="0.1.0",
+    version="0.3.0",
     prog_name="agytask",
-    message="%(prog)s الإصدار %(version)s"
+    message="%(prog)s version %(version)s",
 )
 def main(
     project_dir: str,
@@ -107,31 +108,28 @@ def main(
     task_id: Optional[str],
     launch_gui: bool,
     retries: int,
-    yes: bool
+    yes: bool,
 ) -> None:
-    """نقطة الدخول الرئيسية لأداة الطرفية agytask."""
-    # عند طلب الواجهة الرسومية
+    """Main CLI entry point for agytask."""
     if launch_gui:
         from .ui import launch_ui
         launch_ui()
         return
 
-    # التحقق من مسار المشروع وتفعيله تفاعلياً عند الحاجة
     resolved_proj = clean_to_absolute_path(project_dir)
     if not resolved_proj.is_dir():
         if not yes and sys.stdin.isatty():
-            click.secho(f"[!] مجلد المشروع غير موجود: {resolved_proj}", fg="yellow")
+            click.secho(f"[!] Project directory does not exist: {resolved_proj}", fg="yellow")
             while True:
-                user_proj = click.prompt("أدخل مسار مجلد المشروع الصحيح", type=str, default=".")
+                user_proj = click.prompt("Enter a valid project directory path", type=str, default=".")
                 resolved_proj = clean_to_absolute_path(user_proj)
                 if resolved_proj.is_dir():
                     break
-                click.secho(f"[!] المسار غير صحيح أو ليس مجلداً: {resolved_proj}", fg="red")
+                click.secho(f"[!] Invalid directory path: {resolved_proj}", fg="red")
         else:
-            click.secho(f"[✘] خطأ: مجلد المشروع غير موجود: {resolved_proj}", fg="red", err=True)
+            click.secho(f"[ERROR] Project directory not found: {resolved_proj}", fg="red", err=True)
             sys.exit(1)
 
-    # التحقق من مسار ملف المهام وتفعيله تفاعلياً عند الحاجة
     candidate_tasks = Path(tasks_file)
     if candidate_tasks.is_absolute() or candidate_tasks.is_file():
         resolved_tasks = clean_to_absolute_path(candidate_tasks)
@@ -140,9 +138,9 @@ def main(
 
     if not resolved_tasks.is_file():
         if not yes and sys.stdin.isatty():
-            click.secho(f"[!] ملف المهام غير موجود في: {resolved_tasks}", fg="yellow")
+            click.secho(f"[!] Tasks file not found: {resolved_tasks}", fg="yellow")
             while True:
-                user_file = click.prompt("أدخل مسار ملف المهام الصحيح", type=str, default="TASKS.md")
+                user_file = click.prompt("Enter a valid tasks file path", type=str, default="TASKS.md")
                 c_file = Path(user_file)
                 if c_file.is_absolute() or c_file.is_file():
                     resolved_tasks = clean_to_absolute_path(c_file)
@@ -151,12 +149,11 @@ def main(
 
                 if resolved_tasks.is_file():
                     break
-                click.secho(f"[!] لم يتم العثور على الملف: {resolved_tasks}", fg="red")
+                click.secho(f"[!] File not found: {resolved_tasks}", fg="red")
         else:
-            click.secho(f"[✘] خطأ: ملف المهام غير موجود: {resolved_tasks}", fg="red", err=True)
+            click.secho(f"[ERROR] Tasks file not found: {resolved_tasks}", fg="red", err=True)
             sys.exit(1)
 
-    # إدارة الجلسة
     final_session = session
     if not final_session:
         if not yes and sys.stdin.isatty():
@@ -170,7 +167,7 @@ def main(
                     final_session = input_id
                 else:
                     final_session = f"agy-session-{uuid.uuid4().hex[:10]}"
-                    click.secho(f"[!] إدخال فارغ. تم توليد معرف جديد: {final_session}", fg="yellow")
+                    click.secho(f"[!] Empty input. Generated new session ID: {final_session}", fg="yellow")
             else:
                 final_session = f"agy-session-{uuid.uuid4().hex[:10]}"
         else:
@@ -178,7 +175,6 @@ def main(
 
     click.secho(f"[*] Bound Session ID: {final_session}", fg="green")
 
-    # إذا اختار المستخدم الوضع التفاعلي المباشر (agy -i)
     if interactive:
         from .interactive_worker import run_interactive_pipeline
         exit_code = run_interactive_pipeline(
@@ -188,10 +184,8 @@ def main(
             model=model,
             mode=mode,
             effort=effort,
-            dangerously_skip_permissions=True,
             task_id=task_id,
-            no_auto_next=False,
-            pause_at_end=False
+            pause_at_end=False,
         )
         sys.exit(exit_code)
 
@@ -207,7 +201,7 @@ def main(
             model=model,
             retries=retries,
             auto_confirm=yes,
-            interactive=(not yes)
+            interactive=(not yes),
         )
 
         if results.get("status") in ("completed", "empty"):
@@ -218,10 +212,10 @@ def main(
             sys.exit(1)
 
     except KeyboardInterrupt:
-        click.secho("\n[!] تم إيقاف التنفيذ بأمان بناءً على طلب المستخدم.", fg="yellow")
+        click.secho("\n[!] Execution stopped safely by user.", fg="yellow")
         sys.exit(130)
     except Exception as exc:
-        click.secho(f"\n[✘] حدث خطأ غير متوقع: {exc}", fg="red", err=True)
+        click.secho(f"\n[ERROR] Unexpected error: {exc}", fg="red", err=True)
         sys.exit(1)
 
 

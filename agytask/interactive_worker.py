@@ -1,11 +1,11 @@
 """
-interactive_worker.py - تشغيل مهام Antigravity تسلسلياً داخل جلسة agy التفاعلية الحية.
+interactive_worker.py - Sequential task execution inside a live interactive `agy` TUI session.
 
-يقوم هذا السكربت بفتح واجهة agy التفاعلية (TUI) في الجلسة المحددة دون استخدام الراية (-i)
-التي كانت تتسبب في إنشاء جلسة جديدة، ثم يقوم خيط تحكم خلفي (Orchestrator Thread) بضخ
-المهام واحدة تلو الأخرى مباشرة داخل حقل الإدخال الحي عبر WriteConsoleInputW، ومراقبة
-ملف سجل المحادثة (transcript.jsonl) لاكتشاف انتهاء كل مهمة تلقائياً، وتحديث ملف المهام
-بوسم [COMPLETED]، وإرسال المهمة التالية تلقائياً في نفس الجلسة دون توقف.
+Launches `agy` in the target conversation without `-i` (which would force a new session),
+then runs a background orchestrator thread that injects tasks one by one into the live
+console input via `WriteConsoleInputW` (`CONIN$`), monitors `transcript.jsonl` to detect
+turn completion, marks each task `[COMPLETED]` in the Markdown file, and automatically
+dispatches the next task in the same session.
 """
 
 import os
@@ -22,9 +22,9 @@ import threading
 import subprocess
 from ctypes import wintypes
 from pathlib import Path
-from typing import Optional, List, Tuple
+from typing import Optional, List
 
-# ضمان تواجد مجلد الحزمة في sys.path حتى لو تم التشغيل من مجلد عمل خارجي (مثل StockLamPlus)
+# Ensure package root is on sys.path when executed directly from an external working directory.
 _current_dir = Path(__file__).resolve().parent
 _repo_root = _current_dir.parent
 for _p in (str(_repo_root), str(_current_dir)):
@@ -33,24 +33,18 @@ for _p in (str(_repo_root), str(_current_dir)):
 
 try:
     from agytask.parser import clean_to_absolute_path, parse_tasks_file, mark_task_as_completed, Task
+    from agytask.models import DEFAULT_MODEL, resolve_agy_model_and_effort
 except (ImportError, ModuleNotFoundError):
     try:
         from parser import clean_to_absolute_path, parse_tasks_file, mark_task_as_completed, Task
+        from models import DEFAULT_MODEL, resolve_agy_model_and_effort
     except (ImportError, ModuleNotFoundError):
         from .parser import clean_to_absolute_path, parse_tasks_file, mark_task_as_completed, Task
-
-
-# نماذج agy التي تستخدم لاحقة الجهد (-low / -medium / -high) بدلاً من راية --effort المنفصلة
-TIERED_MODEL_BASES = (
-    "gemini-3.8-flash",
-    "gemini-4-argon",
-    "claude-sonnet-5-5",
-    "claude-opus-5-5",
-)
+        from .models import DEFAULT_MODEL, resolve_agy_model_and_effort
 
 
 def set_console_title(title: str) -> None:
-    """تعيين عنوان نافذة الطرفية بشكل آمن في ويندوز."""
+    """Safely set the Windows console window title."""
     try:
         if sys.platform == "win32":
             ctypes.windll.kernel32.SetConsoleTitleW(title)
@@ -59,46 +53,12 @@ def set_console_title(title: str) -> None:
 
 
 def get_agy_brain_dir() -> Path:
-    """الحصول على مسار مجلد المحادثات (brain) الخاص بـ Antigravity CLI."""
+    """Return the Antigravity CLI brain directory path."""
     return Path.home() / ".gemini" / "antigravity-cli" / "brain"
 
 
-def resolve_agy_model_and_effort(model: str, effort: Optional[str]) -> Tuple[str, Optional[str]]:
-    """
-    مواءمة اسم النموذج ومستوى الجهد مع متطلبات agy CLI.
-    النماذج القياسية في agy مثل gemini-3.8-flash لا تقبل الراية --effort منفصلة،
-    بل تتطلب تمرير الاسم المدمج مثل gemini-3.8-flash-medium أو gemini-3.8-flash-high.
-    """
-    clean_model = (model or "gemini-3.8-flash").strip()
-    eff = (effort or "medium").strip().lower()
-    if eff in ("from-task", ""):
-        eff = "medium"
-    if eff in ("xhigh", "max"):
-        eff_tier = "high"
-    elif eff in ("low", "medium", "high"):
-        eff_tier = eff
-    else:
-        eff_tier = "medium"
-
-    # إذا كان النموذج من عائلة النماذج متعددة المستويات (أو ينتهي بـ -low/-medium/-high)
-    for base in TIERED_MODEL_BASES:
-        if clean_model == base or clean_model.startswith(f"{base}-"):
-            # إذا حدد المستخدم نموذجاً بلاحقة صريحة ولم يطلب تجاوز الجهد، نحترم اللاحقة أو ندمج الجهد
-            if clean_model == base:
-                return f"{base}-{eff_tier}", None
-            else:
-                return clean_model, None
-
-    if clean_model == "gpt-oss-120b":
-        return "gpt-oss-120b-medium", None
-    if clean_model == "gpt-oss-120b-medium":
-        return clean_model, None
-
-    return clean_model, None
-
-
 # ==============================================================================
-# حقن الإدخال المباشر في طرفية ويندوز (Windows Console Input Injection)
+# Windows Console Input Injection
 # ==============================================================================
 
 if sys.platform == "win32":
@@ -136,9 +96,7 @@ if sys.platform == "win32":
 
 
 def is_agy_vim_mode_enabled() -> bool:
-    """
-    التحقق من ملف إعدادات Antigravity CLI (settings.json) لمعرفة ما إذا كان وضع Vim مفعلاً.
-    """
+    """Check Antigravity CLI settings.json to determine whether Vim editor mode is enabled."""
     settings_path = Path.home() / ".gemini" / "antigravity-cli" / "settings.json"
     if not settings_path.is_file():
         return False
@@ -152,7 +110,7 @@ def is_agy_vim_mode_enabled() -> bool:
 
 
 def _make_key_record(ch: str, key_down: bool, vk: int = 0, scan: int = 0) -> "INPUT_RECORD":
-    """إنشاء سجل حدث ضغطة مفتاح لويندوز."""
+    """Create a Windows console key event record."""
     rec = INPUT_RECORD()
     rec.EventType = KEY_EVENT
     rec.Event.KeyEvent.bKeyDown = 1 if key_down else 0
@@ -165,7 +123,7 @@ def _make_key_record(ch: str, key_down: bool, vk: int = 0, scan: int = 0) -> "IN
 
 
 def _write_console_records(kernel32, h_conin, records: list) -> int:
-    """كتابة مصفوفة أحداث مفاتيح إلى مقبض الطرفية CONIN$."""
+    """Write an array of key event records to the CONIN$ handle."""
     arr = (INPUT_RECORD * len(records))(*records)
     written = wintypes.DWORD(0)
     kernel32.WriteConsoleInputW(h_conin, ctypes.byref(arr), len(records), ctypes.byref(written))
@@ -174,9 +132,9 @@ def _write_console_records(kernel32, h_conin, records: list) -> int:
 
 def send_console_key_enter() -> bool:
     """
-    إرسال أمر الإرسال (Submit) إلى حقل الإدخال في الطرفية التفاعلية:
-    - إذا كان وضع Vim مفعلاً، يرسل Esc للخروج من وضع INSERT إلى وضع NORMAL ثم يضغط Enter.
-    - في الوضع العادي، يضغط Enter مباشرة.
+    Send a submit key sequence to the interactive input field:
+    - In Vim mode, send Esc to return to NORMAL mode, then press Enter.
+    - In standard mode, press Enter directly.
     """
     if sys.platform != "win32":
         return False
@@ -216,14 +174,10 @@ def send_console_key_enter() -> bool:
 
 def send_console_text(text: str, press_enter: bool = True) -> bool:
     """
-    كتابة نص كامل (مع دعم العربية واليونيكود ووضع Vim) مباشرة داخل حقل إدخال واجهة agy التفاعلية:
-    1. في حال تفعيل وضع Vim داخل agy:
-       - يرسل Esc ثم حرف 'i' لضمان الدخول في وضع (-- INSERT --) قبل بدء كتابة النص
-         (حتى لا يتم تفسير أحرف النص مثل 'P' كأوامر لصق في وضع Normal).
-       - يكتب النص على دفعات متوازنة.
-       - يرسل Esc للانتقال إلى وضع (-- NORMAL --) ثم يضغط Enter لتنفيذ الإرسال (vim.normal.submit).
-    2. في الوضع القياسي:
-       - يكتب النص مباشرة ثم يضغط Enter.
+    Inject full text (with Unicode and Vim mode support) directly into the live `agy` input box:
+    1. If Vim mode is enabled, send Esc -> 'i' to enter INSERT mode cleanly before typing.
+    2. Write text in balanced chunks so the TUI processes every character reliably.
+    3. If press_enter is True, exit INSERT mode (Esc) in Vim mode and press Enter to submit.
     """
     if sys.platform != "win32":
         return False
@@ -245,7 +199,6 @@ def send_console_text(text: str, press_enter: bool = True) -> bool:
         try:
             vim_mode = is_agy_vim_mode_enabled()
 
-            # 1. إذا كان وضع Vim مفعلاً، نضمن الدخول النظيف في وضع INSERT عبر (Esc -> i)
             if vim_mode:
                 esc_records = [
                     _make_key_record("\x1b", True, vk=0x1B, scan=0x01),
@@ -261,7 +214,6 @@ def send_console_text(text: str, press_enter: bool = True) -> bool:
                 _write_console_records(kernel32, h_conin, i_records)
                 time.sleep(0.2)
 
-            # 2. إرسال النص على دفعات صغيرة (48 حرفاً في كل دفعة) لضمان استيعاب كامل في واجهة TUI
             chunk_size = 48
             for i in range(0, len(text), chunk_size):
                 chunk = text[i : i + chunk_size]
@@ -272,7 +224,6 @@ def send_console_text(text: str, press_enter: bool = True) -> bool:
                 _write_console_records(kernel32, h_conin, records)
                 time.sleep(0.015)
 
-            # 3. إرسال الرسالة: في وضع Vim نخرج من INSERT عبر Esc ثم نضغط Enter في وضع NORMAL
             if press_enter:
                 time.sleep(0.25)
                 if vim_mode:
@@ -298,8 +249,8 @@ def send_console_text(text: str, press_enter: bool = True) -> bool:
 
 def build_single_line_task_prompt(task: Task, project_dir: Path, tasks_file_path: Path) -> str:
     """
-    بناء نص المهمة في سطر واحد متكامل لإدخاله في مربع نص agy التفاعلي دون أن يؤدي وجود
-    سطر جديد (Newline) إلى إرسال مبكر للرسالة قبل اكتمال نصها.
+    Build a single-line prompt for the interactive `agy` input field so embedded newlines
+    do not trigger premature submission.
     """
     task_id = task["id"]
     raw_lines = [line.strip() for line in task["content"].splitlines() if line.strip()]
@@ -311,22 +262,22 @@ def build_single_line_task_prompt(task: Task, project_dir: Path, tasks_file_path
         f"Requirements: 1. Read relevant README.md and docs if referenced. "
         f"2. Apply the requested code modifications cleanly. "
         f"3. Update Task #{task_id} header in {tasks_file_path.name} to [COMPLETED]. "
-        f"4. Commit changes with Conventional Commits and provide a concise summary in Arabic."
+        f"4. Commit changes with Conventional Commits and provide a concise summary."
     )
     return prompt
 
 
 # ==============================================================================
-# مراقبة جاهزية agy واكتمال المهام عبر ملفات السجل و transcript.jsonl
+# Readiness and Turn Completion Monitoring via Log & transcript.jsonl
 # ==============================================================================
 
 def get_transcript_path(conv_id: str) -> Path:
-    """إرجاع مسار ملف transcript.jsonl الخاص بالجلسة."""
+    """Return the path to transcript.jsonl for a given conversation ID."""
     return get_agy_brain_dir() / conv_id / ".system_generated" / "logs" / "transcript.jsonl"
 
 
 def read_transcript_steps(transcript_path: Path) -> List[dict]:
-    """قراءة كافة خطوات transcript.jsonl بأمان."""
+    """Safely read all JSONL steps from transcript.jsonl."""
     if not transcript_path.is_file():
         return []
     steps: List[dict] = []
@@ -347,10 +298,10 @@ def read_transcript_steps(transcript_path: Path) -> List[dict]:
 
 def is_turn_complete(new_steps: List[dict]) -> bool:
     """
-    التحقق مما إذا كان الوكيل قد أنهى تنفيذ المهمة الحالية بالكامل:
-    1. وجود خطوة USER_INPUT جديدة تمثل المهمة المرسلة.
-    2. عدم وجود أمر خلفي (RUNNING) لم ترد له رسالة SYSTEM_MESSAGE بانتهائه بعد.
-    3. أن تكون آخر خطوة في السجل من نوع PLANNER_RESPONSE وبحالة DONE وبدون استدعاءات أدوات (tool_calls).
+    Determine whether the agent has finished the current task turn:
+    1. A new USER_INPUT step exists for the submitted task.
+    2. No background step with status RUNNING is still pending a SYSTEM_MESSAGE completion.
+    3. The final step is a PLANNER_RESPONSE with status DONE, no tool_calls, and non-empty content.
     """
     if not new_steps:
         return False
@@ -367,10 +318,8 @@ def is_turn_complete(new_steps: List[dict]) -> bool:
     if not turn_steps:
         return False
 
-    # التحقق من عدم وجود مهمة خلفية جارية لم تنتهِ بعد
     for i, step in enumerate(turn_steps):
         if step.get("status") == "RUNNING":
-            # يجب أن توجد خطوة SYSTEM_MESSAGE لاحقة تؤكد انتهاء المهمة الخلفية
             has_completion_msg = any(
                 s.get("type") == "SYSTEM_MESSAGE" for s in turn_steps[i + 1 :]
             )
@@ -390,12 +339,11 @@ def is_turn_complete(new_steps: List[dict]) -> bool:
 
 
 def detect_active_conversation_from_log(log_file: Path, fallback_conv_id: Optional[str] = None) -> Optional[str]:
-    """استخراج معرف المحادثة الفعلي النشط من ملف سجل agy."""
+    """Extract the active conversation UUID from the `agy` CLI log file."""
     if not log_file.is_file():
         return fallback_conv_id
     try:
         text = log_file.read_text(encoding="utf-8", errors="replace")
-        # الأولوية لآخر رسالة تم توجيهها للمحادثة
         m_fwd = re.findall(r"Forwarding user message to conversation ([0-9a-fA-F-]{36})", text)
         if m_fwd:
             return m_fwd[-1]
@@ -412,8 +360,8 @@ def detect_active_conversation_from_log(log_file: Path, fallback_conv_id: Option
 
 def wait_for_agy_ready(log_file: Path, proc: subprocess.Popen, timeout: float = 35.0) -> bool:
     """
-    الانتظار حتى تكتمل تهيئة واجهة agy التفاعلية وتسجيل الدخول الصامت وتحديث التجارب،
-    لضمان عدم ضياع النص المحقون أو إعادة تعيين المحادثة.
+    Wait until the interactive `agy` TUI finishes initialization and login/experiments
+    so injected text is not lost or reset.
     """
     start = time.time()
     ready_input_seen_at: Optional[float] = None
@@ -451,8 +399,9 @@ def orchestrate_tasks_in_live_session(
     auto_next_delay: float = 3.5,
 ) -> None:
     """
-    خيط التحكم الخلفي الذي يرسل المهام تباعاً إلى جلسة agy التفاعلية المفتوحة،
-    ويراقب إنجاز كل مهمة عبر transcript.jsonl ليحدث ملف المهام ويرسل المهمة التالية تلقائياً.
+    Background orchestrator thread that injects tasks sequentially into the open `agy`
+    session, monitors transcript.jsonl for completion, marks tasks [COMPLETED], and
+    automatically dispatches the next task.
     """
     if not wait_for_agy_ready(log_file, proc):
         return
@@ -467,10 +416,9 @@ def orchestrate_tasks_in_live_session(
         total = len(target_tasks)
         conv_label = active_conv_id or "New-Session"
         set_console_title(
-            f"Antigravity Live Runner [Session: {conv_label}] - جاري تنفيذ المهمة #{task_id} ({idx + 1}/{total})"
+            f"Antigravity Live Runner [Session: {conv_label}] - Running Task #{task_id} ({idx + 1}/{total})"
         )
 
-        # حساب عدد الخطوات الحالية في transcript.jsonl قبل إرسال المهمة
         baseline_steps_count = 0
         if active_conv_id:
             t_path = get_transcript_path(active_conv_id)
@@ -478,11 +426,9 @@ def orchestrate_tasks_in_live_session(
 
         log_size_before = log_file.stat().st_size if log_file.is_file() else 0
 
-        # بناء نص المهمة وإرساله مباشرة في حقل الإدخال الحي
         prompt_text = build_single_line_task_prompt(task, project_dir, tasks_file)
         send_console_text(prompt_text, press_enter=True)
 
-        # التحقق من استلام agy للرسالة وتحديد معرف المحادثة الفعلي
         submitted = False
         wait_submit_start = time.time()
         while time.time() - wait_submit_start < 9.0:
@@ -498,7 +444,6 @@ def orchestrate_tasks_in_live_session(
                         new_conv = m_fwd[-1]
                         if new_conv != active_conv_id:
                             active_conv_id = new_conv
-                            # إذا كانت محادثة جديدة، نضبط خط الأساس على 0 لتتبع أول USER_INPUT فيها
                             baseline_steps_count = 0
                         submitted = True
                         break
@@ -513,13 +458,11 @@ def orchestrate_tasks_in_live_session(
 
             time.sleep(0.3)
 
-        # إذا لم يتم إرسال الرسالة بعد (مثلاً بسبب قائمة إكمال تلقائي)، نرسل ضغطة Enter إضافية
         if not submitted and proc.poll() is None:
             send_console_key_enter()
             time.sleep(1.5)
             active_conv_id = detect_active_conversation_from_log(log_file, active_conv_id)
 
-        # مراقبة transcript.jsonl حتى تنتهي المهمة الحالية بالكامل
         quiescent_since: Optional[float] = None
         last_file_size = -1
 
@@ -548,7 +491,6 @@ def orchestrate_tasks_in_live_session(
                     if quiescent_since is None:
                         quiescent_since = time.time()
                     elif time.time() - quiescent_since >= 4.0:
-                        # اكتملت المهمة رسمياً واستقر سجل المحادثة!
                         break
                 else:
                     last_file_size = curr_size
@@ -562,25 +504,23 @@ def orchestrate_tasks_in_live_session(
         if proc.poll() is not None:
             return
 
-        # تحديث حالة المهمة في ملف المهام إلى [COMPLETED]
         try:
             mark_task_as_completed(tasks_file, task_id)
         except Exception:
             pass
 
-        # إذا كانت هناك مهمة تالية، ننتظر مهلة قصيرة ثم نضخها تلقائياً في نفس الجلسة
         if idx < total - 1:
             next_id = target_tasks[idx + 1]["id"]
             for remaining in range(int(auto_next_delay), 0, -1):
                 if proc.poll() is not None:
                     return
                 set_console_title(
-                    f"Antigravity Live Runner [✔ اكتملت #{task_id}] - إرسال المهمة #{next_id} خلال {remaining} ث..."
+                    f"Antigravity Live Runner [Done #{task_id}] - Sending Task #{next_id} in {remaining}s..."
                 )
                 time.sleep(1.0)
         else:
             set_console_title(
-                f"Antigravity Live Runner [Session: {active_conv_id}] - ✔ اكتملت جميع المهام ({total}/{total}) بنجاح!"
+                f"Antigravity Live Runner [Session: {active_conv_id}] - All tasks completed ({total}/{total})"
             )
 
 
@@ -588,7 +528,7 @@ def run_interactive_pipeline(
     project_dir_raw: str,
     tasks_file_raw: str,
     session_id: str,
-    model: str = "gemini-3.8-flash",
+    model: str = DEFAULT_MODEL,
     mode: str = "accept-edits",
     effort: str = "from-task",
     dangerously_skip_permissions: bool = True,
@@ -597,7 +537,8 @@ def run_interactive_pipeline(
     pause_at_end: bool = True,
 ) -> int:
     """
-    تشغيل خط معالجة المهام تسلسلياً داخل جلسة agy التفاعلية الحية في نفس المحادثة.
+    Launch `agy` in live interactive mode and orchestrate pending tasks sequentially.
+    Permission skipping and auto-continue are always enabled.
     """
     if sys.platform == "win32":
         try:
@@ -616,35 +557,34 @@ def run_interactive_pipeline(
     set_console_title(f"Antigravity Live Runner [Session: {session_id}]")
 
     print("=" * 78)
-    print("        ANTIGRAVITY TASK RUNNER - المشغّل التفاعلي المباشر (Live TUI)        ")
+    print("             ANTIGRAVITY TASK RUNNER - LIVE INTERACTIVE TUI             ")
     print("=" * 78)
-    print(f"المشروع     : {project_dir}")
-    print(f"ملف المهام  : {tasks_file}")
-    print(f"الجلسة      : {session_id}")
-    print(f"النموذج     : {model} | وضع الوكيل: {mode}")
+    print(f"Project    : {project_dir}")
+    print(f"Tasks File : {tasks_file}")
+    print(f"Session    : {session_id}")
+    print(f"Model      : {model} | Mode: {mode}")
     print("=" * 78)
 
     if not project_dir.is_dir():
-        print(f"[✘] خطأ: مجلد المشروع غير موجود: {project_dir}")
+        print(f"[ERROR] Project directory not found: {project_dir}")
         if pause_at_end:
-            input("\nاضغط Enter للإغلاق...")
+            input("\nPress Enter to close...")
         return 1
 
     if not tasks_file.is_file():
-        print(f"[✘] خطأ: ملف المهام غير موجود: {tasks_file}")
+        print(f"[ERROR] Tasks file not found: {tasks_file}")
         if pause_at_end:
-            input("\nاضغط Enter للإغلاق...")
+            input("\nPress Enter to close...")
         return 1
 
     try:
-        all_pending_tasks, skipped_ids = parse_tasks_file(tasks_file)
+        all_pending_tasks, _ = parse_tasks_file(tasks_file)
     except Exception as e:
-        print(f"[✘] خطأ في قراءة ملف المهام: {e}")
+        print(f"[ERROR] Failed to parse tasks file: {e}")
         if pause_at_end:
-            input("\nاضغط Enter للإغلاق...")
+            input("\nPress Enter to close...")
         return 1
 
-    # تحديد المهام المراد تنفيذها
     target_tasks: List[Task] = []
     if task_id:
         found = [t for t in all_pending_tasks if str(t["id"]) == str(task_id)]
@@ -665,9 +605,9 @@ def run_interactive_pipeline(
                     }
                 ]
             else:
-                print(f"[✘] لم يتم العثور على المهمة رقم #{task_id} في الملف.")
+                print(f"[ERROR] Task #{task_id} was not found in the tasks file.")
                 if pause_at_end:
-                    input("\nاضغط Enter للإغلاق...")
+                    input("\nPress Enter to close...")
                 return 1
         else:
             target_tasks = found
@@ -675,20 +615,18 @@ def run_interactive_pipeline(
         target_tasks = all_pending_tasks
 
     if not target_tasks:
-        print("\n[i] لا توجد مهام معلقة للتنفيذ! جميع المهام مكتملة مسبقاً.")
+        print("\n[i] No pending tasks to execute. All tasks are already completed.")
         if pause_at_end:
-            input("\nاضغط Enter للإغلاق...")
+            input("\nPress Enter to close...")
         return 0
 
-    print(f"\n[+] تم تجهيز {len(target_tasks)} مهمة لإرسالها تسلسلياً في نفس جلسة agy الحية:")
+    print(f"\n[+] Queued {len(target_tasks)} task(s) for sequential execution in live agy session:")
     for t in target_tasks:
-        print(f"    - المهمة #{t['id']:<4} | الجهد: {t['effort'].upper():<8}")
+        print(f"    - Task #{t['id']:<4} | Effort: {t['effort'].upper():<8}")
 
-    # مواءمة النموذج ومستوى الجهد لأول مهمة
     first_effort = effort if (effort and effort != "from-task") else target_tasks[0]["effort"]
     resolved_model, resolved_effort_flag = resolve_agy_model_and_effort(model, first_effort)
 
-    # التحقق مما إذا كان معرف الجلسة موجوداً فعلياً في مجلد brain لاستئنافه بدقة
     clean_session = (session_id or "").strip()
     brain_dir = get_agy_brain_dir()
     session_exists_in_brain = bool(clean_session and (brain_dir / clean_session).is_dir())
@@ -696,30 +634,28 @@ def run_interactive_pipeline(
     agy_executable = shutil.which("agy") or "agy"
     temp_log_file = Path(tempfile.gettempdir()) / f"agytask_live_{uuid.uuid4().hex[:8]}.log"
 
-    # ملاحظة جوهرية: لا نمرر الراية (-i) هنا لأن (-i) تجبر agy على إنشاء محادثة جديدة
-    # وتجاهل (--conversation). بدلاً من ذلك نفتحه مباشرة ونضخ المهام عبر CONIN$.
+    # Note: Do not pass `-i` here because `-i` forces agy to create a new conversation
+    # and ignore `--conversation`. Launch directly and inject tasks via CONIN$.
     cmd = [
         agy_executable,
         "--add-dir", str(project_dir),
         "--model", resolved_model,
         "--mode", mode,
         "--log-file", str(temp_log_file),
+        "--dangerously-skip-permissions",
     ]
 
     if session_exists_in_brain:
         cmd.extend(["--conversation", clean_session])
-        print(f"[+] سيتم استئناف الجلسة المحددة مباشرة: {clean_session}")
+        print(f"[+] Resuming existing session: {clean_session}")
     else:
-        print(f"[i] الجلسة ({clean_session}) غير موجودة مسبقاً في سجل agy؛ سيتم بدء جلسة حية موحدة لجميع المهام.")
+        print(f"[i] Session ({clean_session}) not found in brain; starting a unified live session.")
 
     if resolved_effort_flag:
         cmd.extend(["--effort", resolved_effort_flag])
 
-    if dangerously_skip_permissions:
-        cmd.append("--dangerously-skip-permissions")
-
-    print(f"[+] النموذج النشط: {resolved_model} | الوضع: {mode}")
-    print("[+] جاري فتح واجهة agy الحية وإرسال المهام تلقائياً الواحدة تلو الأخرى...\n")
+    print(f"[+] Active Model: {resolved_model} | Mode: {mode} | Permissions: Auto-Skip | Auto-Continue: On")
+    print("[+] Launching live agy TUI and dispatching tasks automatically...\n")
     time.sleep(0.6)
 
     try:
@@ -734,7 +670,7 @@ def run_interactive_pipeline(
                 tasks_file,
                 clean_session if session_exists_in_brain else None,
                 temp_log_file,
-                4.0 if not no_auto_next else 8.0,
+                3.5,
             ),
             daemon=True,
         )
@@ -744,12 +680,12 @@ def run_interactive_pipeline(
         return return_code
 
     except KeyboardInterrupt:
-        print("\n\n[!] تم إيقاف جلسة agy بواسطة المستخدم (Ctrl+C).")
+        print("\n\n[!] Live agy session interrupted by user (Ctrl+C).")
         return 130
     except FileNotFoundError:
-        print("\n[✘] خطأ: لم يتم العثور على أداة agy في النظام! يرجى التأكد من تثبيتها وإضافتها للمسار PATH.")
+        print("\n[ERROR] `agy` executable not found in PATH. Please ensure Antigravity CLI is installed.")
         if pause_at_end:
-            input("\nاضغط Enter للإغلاق...")
+            input("\nPress Enter to close...")
         return 127
     finally:
         try:
@@ -760,16 +696,14 @@ def run_interactive_pipeline(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="مشغّل مهام Antigravity التفاعلي الحي")
-    parser.add_argument("--project-dir", required=True, help="مسار مجلد المشروع")
-    parser.add_argument("--tasks-file", required=True, help="مسار ملف المهام Markdown")
-    parser.add_argument("--session", required=True, help="معرف الجلسة Conversation ID")
-    parser.add_argument("--model", default="gemini-3.8-flash", help="اسم النموذج")
-    parser.add_argument("--mode", default="accept-edits", help="وضع التنفيذ لـ agy")
-    parser.add_argument("--effort", default="from-task", help="جهد التفكير Override أو from-task")
-    parser.add_argument("--dangerously-skip-permissions", action="store_true", default=True, help="تخطي الأذونات تلقائياً")
-    parser.add_argument("--task-id", default=None, help="تنفيذ مهمة محددة فقط برقمها")
-    parser.add_argument("--no-auto-next", action="store_true", help="إلغاء المتابعة التلقائية وانتظار تأكيد يدوي")
+    parser = argparse.ArgumentParser(description="Antigravity Live Interactive Task Runner")
+    parser.add_argument("--project-dir", required=True, help="Target project directory path")
+    parser.add_argument("--tasks-file", required=True, help="Markdown tasks file path")
+    parser.add_argument("--session", required=True, help="Conversation / Session ID")
+    parser.add_argument("--model", default=DEFAULT_MODEL, help="Model ID for agy")
+    parser.add_argument("--mode", default="accept-edits", help="Agent execution mode")
+    parser.add_argument("--effort", default="from-task", help="Reasoning effort override or from-task")
+    parser.add_argument("--task-id", default=None, help="Run only a specific task by ID")
 
     args = parser.parse_args()
 
@@ -780,9 +714,9 @@ def main() -> None:
         model=args.model,
         mode=args.mode,
         effort=args.effort,
-        dangerously_skip_permissions=args.dangerously_skip_permissions,
+        dangerously_skip_permissions=True,
         task_id=args.task_id,
-        no_auto_next=args.no_auto_next,
+        no_auto_next=False,
         pause_at_end=True,
     )
     sys.exit(exit_code)

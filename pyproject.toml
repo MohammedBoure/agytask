@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agytask"
 version = "0.1.0"
-description = "Antigravity CLI Task Runner - أداة سطر أوامر وحزمة بايثون لأتمتة وتنفيذ مهام Antigravity"
+description = "Antigravity CLI Task Runner - Automation CLI and desktop GUI for Antigravity Markdown task pipelines"
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
@@ -28,6 +28,7 @@ classifiers = [
 ]
 dependencies = [
     "click>=8.0.0",
+    "PySide6>=6.6.0",
 ]
 
 [project.scripts]
