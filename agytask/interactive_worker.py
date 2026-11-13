@@ -109,7 +109,13 @@ def is_agy_vim_mode_enabled() -> bool:
         return False
 
 
-def _make_key_record(ch: str, key_down: bool, vk: int = 0, scan: int = 0) -> "INPUT_RECORD":
+def _make_key_record(
+    ch: str,
+    key_down: bool,
+    vk: int = 0,
+    scan: int = 0,
+    ctrl_state: int = 0,
+) -> "INPUT_RECORD":
     """Create a Windows console key event record."""
     rec = INPUT_RECORD()
     rec.EventType = KEY_EVENT
@@ -118,7 +124,7 @@ def _make_key_record(ch: str, key_down: bool, vk: int = 0, scan: int = 0) -> "IN
     rec.Event.KeyEvent.wVirtualKeyCode = vk
     rec.Event.KeyEvent.wVirtualScanCode = scan
     rec.Event.KeyEvent.uChar.UnicodeChar = ch
-    rec.Event.KeyEvent.dwControlKeyState = 0
+    rec.Event.KeyEvent.dwControlKeyState = ctrl_state
     return rec
 
 
@@ -165,6 +171,42 @@ def send_console_key_enter() -> bool:
                 _make_key_record("\r", False, vk=0x0D, scan=0x1C),
             ]
             count = _write_console_records(kernel32, h_conin, enter_records)
+            return count > 0
+        finally:
+            kernel32.CloseHandle(h_conin)
+    except Exception:
+        return False
+
+
+def send_console_interrupt() -> bool:
+    """
+    Send Esc and Ctrl+C to CONIN$ to cancel a stalled command or turn in the `agy` TUI
+    without terminating the `agy` process itself.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        kernel32 = ctypes.windll.kernel32
+        h_conin = kernel32.CreateFileW(
+            "CONIN$",
+            GENERIC_READ | GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            0,
+            None,
+        )
+        if h_conin in (-1, 0, 0xFFFFFFFF, 0xFFFFFFFFFFFFFFFF):
+            return False
+        try:
+            left_ctrl_pressed = 0x0008
+            records = [
+                _make_key_record("\x1b", True, vk=0x1B, scan=0x01),
+                _make_key_record("\x1b", False, vk=0x1B, scan=0x01),
+                _make_key_record("\x03", True, vk=0x43, scan=0x2E, ctrl_state=left_ctrl_pressed),
+                _make_key_record("\x03", False, vk=0x43, scan=0x2E, ctrl_state=left_ctrl_pressed),
+            ]
+            count = _write_console_records(kernel32, h_conin, records)
             return count > 0
         finally:
             kernel32.CloseHandle(h_conin)
@@ -261,8 +303,9 @@ def build_single_line_task_prompt(task: Task, project_dir: Path, tasks_file_path
         f"Execute Task #{task_id}: {compact_body} | "
         f"Requirements: 1. Read relevant README.md and docs if referenced. "
         f"2. Apply the requested code modifications cleanly. "
-        f"3. Update Task #{task_id} header in {tasks_file_path.name} to [COMPLETED]. "
-        f"4. Commit changes with Conventional Commits and provide a concise summary."
+        f"3. If running tests or verification commands, always use non-interactive/headless mode and short timeouts so nothing hangs. "
+        f"4. Update Task #{task_id} header in {tasks_file_path.name} to [COMPLETED]. "
+        f"5. Commit changes with Conventional Commits and provide a concise summary."
     )
     return prompt
 
@@ -397,11 +440,14 @@ def orchestrate_tasks_in_live_session(
     initial_conv_id: Optional[str],
     log_file: Path,
     auto_next_delay: float = 3.5,
+    task_timeout: float = 1200.0,
+    inactivity_timeout: float = 300.0,
 ) -> None:
     """
     Background orchestrator thread that injects tasks sequentially into the open `agy`
     session, monitors transcript.jsonl for completion, marks tasks [COMPLETED], and
-    automatically dispatches the next task.
+    automatically dispatches the next task. Includes stall & timeout watchdogs so a
+    hanging test or command never blocks the pipeline indefinitely.
     """
     if not wait_for_agy_ready(log_file, proc):
         return
@@ -465,63 +511,121 @@ def orchestrate_tasks_in_live_session(
 
         quiescent_since: Optional[float] = None
         last_file_size = -1
+        last_log_size = log_file.stat().st_size if log_file.is_file() else 0
+        task_started_at = time.time()
+        last_activity_at = task_started_at
+        recovery_sent = False
+        timed_out = False
 
         while proc.poll() is None:
+            now = time.time()
+
+            # Track log file growth as a secondary activity signal.
+            if log_file.is_file():
+                try:
+                    cur_log_size = log_file.stat().st_size
+                    if cur_log_size != last_log_size:
+                        last_log_size = cur_log_size
+                        last_activity_at = now
+                except Exception:
+                    pass
+
             if not active_conv_id:
                 active_conv_id = detect_active_conversation_from_log(log_file, active_conv_id)
                 if not active_conv_id:
+                    if inactivity_timeout > 0 and (now - last_activity_at >= inactivity_timeout):
+                        timed_out = True
+                        break
                     time.sleep(1.0)
                     continue
 
             t_path = get_transcript_path(active_conv_id)
-            if not t_path.is_file():
-                time.sleep(1.0)
-                continue
+            curr_size = -1
+            if t_path.is_file():
+                try:
+                    curr_size = t_path.stat().st_size
+                except Exception:
+                    curr_size = -1
 
-            try:
-                curr_size = t_path.stat().st_size
-            except Exception:
-                curr_size = -1
+            if curr_size != last_file_size and curr_size > 0:
+                last_activity_at = now
 
-            all_steps = read_transcript_steps(t_path)
+            all_steps = read_transcript_steps(t_path) if t_path.is_file() else []
             new_steps = all_steps[baseline_steps_count:]
 
             if is_turn_complete(new_steps):
                 if curr_size == last_file_size and curr_size > 0:
                     if quiescent_since is None:
-                        quiescent_since = time.time()
-                    elif time.time() - quiescent_since >= 4.0:
+                        quiescent_since = now
+                    elif now - quiescent_since >= 4.0:
                         break
                 else:
                     last_file_size = curr_size
-                    quiescent_since = time.time()
+                    quiescent_since = now
             else:
                 quiescent_since = None
                 last_file_size = curr_size
+
+            # Watchdog: detect stalled tests/commands or exceeded total task timeout.
+            idle_elapsed = now - last_activity_at
+            total_elapsed = now - task_started_at
+            is_stalled = inactivity_timeout > 0 and idle_elapsed >= inactivity_timeout
+            is_over_budget = task_timeout > 0 and total_elapsed >= task_timeout
+
+            if is_stalled or is_over_budget:
+                if not recovery_sent and proc.poll() is None:
+                    recovery_sent = True
+                    reason = "inactivity" if is_stalled else "timeout"
+                    set_console_title(
+                        f"Antigravity Live Runner [Task #{task_id} {reason}] - Interrupting & recovering..."
+                    )
+                    send_console_interrupt()
+                    time.sleep(2.0)
+                    if t_path.is_file():
+                        baseline_steps_count = len(read_transcript_steps(t_path))
+                    recovery_prompt = (
+                        f"[Task #{task_id} Recovery] Execution stalled ({reason}) — likely a hanging test or blocking command. "
+                        f"Abort any hanging process, run verification with short timeouts/headless mode, "
+                        f"complete Task #{task_id} cleanly, and summarize."
+                    )
+                    send_console_text(recovery_prompt, press_enter=True)
+                    last_activity_at = time.time()
+                    # Give recovery a fresh window before hard abort.
+                    task_started_at = time.time()
+                    quiescent_since = None
+                else:
+                    set_console_title(
+                        f"Antigravity Live Runner [Task #{task_id} Timed Out] - Skipping to next..."
+                    )
+                    send_console_interrupt()
+                    time.sleep(1.5)
+                    timed_out = True
+                    break
 
             time.sleep(1.0)
 
         if proc.poll() is not None:
             return
 
-        try:
-            mark_task_as_completed(tasks_file, task_id)
-        except Exception:
-            pass
+        if not timed_out:
+            try:
+                mark_task_as_completed(tasks_file, task_id)
+            except Exception:
+                pass
 
         if idx < total - 1:
             next_id = target_tasks[idx + 1]["id"]
+            status_tag = "Timed Out" if timed_out else "Done"
             for remaining in range(int(auto_next_delay), 0, -1):
                 if proc.poll() is not None:
                     return
                 set_console_title(
-                    f"Antigravity Live Runner [Done #{task_id}] - Sending Task #{next_id} in {remaining}s..."
+                    f"Antigravity Live Runner [{status_tag} #{task_id}] - Sending Task #{next_id} in {remaining}s..."
                 )
                 time.sleep(1.0)
         else:
-            set_console_title(
-                f"Antigravity Live Runner [Session: {active_conv_id}] - All tasks completed ({total}/{total})"
-            )
+            final_msg = "Finished with timeouts" if timed_out else f"All tasks completed ({total}/{total})"
+            set_console_title(f"Antigravity Live Runner [Session: {active_conv_id}] - {final_msg}")
 
 
 def run_interactive_pipeline(
@@ -535,6 +639,8 @@ def run_interactive_pipeline(
     task_id: Optional[str] = None,
     no_auto_next: bool = False,
     pause_at_end: bool = True,
+    task_timeout: float = 1200.0,
+    inactivity_timeout: float = 300.0,
 ) -> int:
     """
     Launch `agy` in live interactive mode and orchestrate pending tasks sequentially.
@@ -671,6 +777,8 @@ def run_interactive_pipeline(
                 clean_session if session_exists_in_brain else None,
                 temp_log_file,
                 3.5,
+                task_timeout,
+                inactivity_timeout,
             ),
             daemon=True,
         )
@@ -704,6 +812,12 @@ def main() -> None:
     parser.add_argument("--mode", default="accept-edits", help="Agent execution mode")
     parser.add_argument("--effort", default="from-task", help="Reasoning effort override or from-task")
     parser.add_argument("--task-id", default=None, help="Run only a specific task by ID")
+    parser.add_argument(
+        "--task-timeout",
+        type=float,
+        default=20.0,
+        help="Per-task timeout in minutes (0 to disable). Default: 20",
+    )
 
     args = parser.parse_args()
 
@@ -718,6 +832,7 @@ def main() -> None:
         task_id=args.task_id,
         no_auto_next=False,
         pause_at_end=True,
+        task_timeout=max(0.0, args.task_timeout) * 60.0,
     )
     sys.exit(exit_code)
 

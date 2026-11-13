@@ -63,6 +63,7 @@ agytask [OPTIONS]
 | `--effort` | | Reasoning effort (`from-task`, `low`, `medium`, `high`, `xhigh`, `max`) | `from-task` |
 | `--task-id` | | Run only a specific task by numeric ID | `None` |
 | `--retries` | | Automatic recovery retries on failure | `2` |
+| `--task-timeout` | | Per-task timeout in minutes (`0` to disable) | `20.0` |
 | `--yes` | `-y` | Skip confirmation prompts | `False` |
 | `--help` | `-h` | Show help message | |
 | `--version` | | Show version | |

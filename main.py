@@ -11,12 +11,12 @@ Usage:
 """
 
 import sys
-from agytask.ui import launch_ui
-from agytask.cli import main as cli_main
 
 if __name__ == "__main__":
     # Launch the PySide6 desktop UI when invoked with no arguments or with --ui / --gui.
     if len(sys.argv) <= 1 or (len(sys.argv) == 2 and sys.argv[1] in ("--ui", "--gui")):
+        from agytask.ui import launch_ui
         launch_ui()
     else:
+        from agytask.cli import main as cli_main
         cli_main()

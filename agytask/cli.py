@@ -87,6 +87,13 @@ from .runner import run_tasks
     help="Number of automatic recovery retries if a task fails.",
 )
 @click.option(
+    "--task-timeout",
+    type=float,
+    default=20.0,
+    show_default=True,
+    help="Per-task timeout in minutes (0 to disable).",
+)
+@click.option(
     "-y", "--yes",
     is_flag=True,
     default=False,
@@ -108,6 +115,7 @@ def main(
     task_id: Optional[str],
     launch_gui: bool,
     retries: int,
+    task_timeout: float,
     yes: bool,
 ) -> None:
     """Main CLI entry point for agytask."""
@@ -186,6 +194,7 @@ def main(
             effort=effort,
             task_id=task_id,
             pause_at_end=False,
+            task_timeout=max(0.0, task_timeout) * 60.0,
         )
         sys.exit(exit_code)
 
@@ -202,6 +211,7 @@ def main(
             retries=retries,
             auto_confirm=yes,
             interactive=(not yes),
+            task_timeout=max(0.0, task_timeout) * 60.0,
         )
 
         if results.get("status") in ("completed", "empty"):

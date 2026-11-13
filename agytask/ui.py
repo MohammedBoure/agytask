@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -103,7 +104,7 @@ QLabel#RuntimeBadge {
     font-weight: 600;
 }
 
-QLineEdit, QComboBox {
+QLineEdit, QComboBox, QSpinBox {
     background-color: #FFFFFF;
     border: 1px solid #CBD5E1;
     border-radius: 6px;
@@ -112,7 +113,7 @@ QLineEdit, QComboBox {
     font-size: 13px;
 }
 
-QLineEdit:focus, QComboBox:focus {
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus {
     border: 1.5px solid #0E7471;
 }
 
@@ -267,6 +268,11 @@ class AntigravityTaskRunnerUI(QMainWindow):
         self._poll_timer.setInterval(2000)
         self._poll_timer.timeout.connect(self._auto_poll_tasks)
         self._poll_timer.start()
+
+    def closeEvent(self, event) -> None:
+        if self._model_thread is not None and self._model_thread.isRunning():
+            self._model_thread.wait(3000)
+        super().closeEvent(event)
 
     def _create_card(self) -> QFrame:
         card = QFrame()
@@ -431,8 +437,19 @@ class AntigravityTaskRunnerUI(QMainWindow):
         session_row.addWidget(refresh_sess_btn)
         session_row.addWidget(new_sess_btn)
 
+        timeout_lbl = QLabel("Task Timeout")
+        timeout_lbl.setObjectName("FieldLabel")
+        self.timeout_spin = QSpinBox()
+        self.timeout_spin.setFixedHeight(36)
+        self.timeout_spin.setRange(1, 240)
+        self.timeout_spin.setValue(20)
+        self.timeout_spin.setSuffix(" min")
+        self.timeout_spin.setToolTip("Maximum time per task before interrupting & recovering (prevents hanging tests)")
+
         config_layout.addWidget(session_lbl, 2, 0)
-        config_layout.addLayout(session_row, 2, 1, 1, 5)
+        config_layout.addLayout(session_row, 2, 1, 1, 3)
+        config_layout.addWidget(timeout_lbl, 2, 4)
+        config_layout.addWidget(self.timeout_spin, 2, 5)
 
         root_layout.addWidget(config_card)
 
@@ -786,6 +803,7 @@ class AntigravityTaskRunnerUI(QMainWindow):
         model = self._get_selected_model_id()
         mode = self.mode_combo.currentText().strip() or "accept-edits"
         effort = self.effort_combo.currentText().strip() or "from-task"
+        task_timeout_min = self.timeout_spin.value()
 
         target_desc = f"Task #{specific_task_id}" if specific_task_id else "all pending tasks"
 
@@ -801,6 +819,7 @@ class AntigravityTaskRunnerUI(QMainWindow):
             "--model", f'"{model}"',
             "--mode", f'"{mode}"',
             "--effort", f'"{effort}"',
+            "--task-timeout", str(task_timeout_min),
         ]
         if specific_task_id:
             worker_args.extend(["--task-id", f'"{specific_task_id}"'])
@@ -825,6 +844,7 @@ class AntigravityTaskRunnerUI(QMainWindow):
                     "--model", model,
                     "--mode", mode,
                     "--effort", effort,
+                    "--task-timeout", str(task_timeout_min),
                 ]
                 if specific_task_id:
                     cmd_list.extend(["--task-id", str(specific_task_id)])

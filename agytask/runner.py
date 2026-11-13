@@ -6,6 +6,8 @@ import os
 import sys
 import time
 import uuid
+import queue
+import threading
 import subprocess
 from pathlib import Path
 from typing import Dict, Any, Optional, Union, List
@@ -14,21 +16,46 @@ from .models import DEFAULT_MODEL, resolve_agy_model_and_effort
 from .parser import Task, parse_tasks_file, mark_task_as_completed, clean_to_absolute_path
 
 
+def _terminate_process(process: Optional[subprocess.Popen]) -> None:
+    """Terminate a subprocess gracefully, falling back to kill."""
+    if not process or process.poll() is not None:
+        return
+    try:
+        process.terminate()
+        process.wait(timeout=3)
+    except Exception:
+        try:
+            process.kill()
+        except Exception:
+            pass
+
+
 def run_stream_command(
     cmd: List[str],
     project_dir: Union[str, Path],
     log_file: Union[str, Path],
     append: bool = False,
+    timeout: Optional[float] = 1200.0,
+    inactivity_timeout: Optional[float] = 300.0,
 ) -> int:
     """
     Execute a command, stream stdout/stderr live to the console and log file,
-    and handle SIGINT / Ctrl+C gracefully.
+    enforce optional total and inactivity timeouts, and handle Ctrl+C gracefully.
     """
     mode = "a" if append else "w"
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
 
     process: Optional[subprocess.Popen] = None
+    line_queue: "queue.Queue[Optional[str]]" = queue.Queue()
+
+    def _reader() -> None:
+        try:
+            if process and process.stdout:
+                for line in iter(process.stdout.readline, ""):
+                    line_queue.put(line)
+        finally:
+            line_queue.put(None)
 
     try:
         with open(log_file, mode, encoding="utf-8", errors="replace") as out_file:
@@ -44,27 +71,43 @@ def run_stream_command(
                 env=env,
             )
 
-            if process.stdout:
-                for line in iter(process.stdout.readline, ""):
+            reader_thread = threading.Thread(target=_reader, daemon=True)
+            reader_thread.start()
+
+            start_time = time.time()
+            last_output_time = start_time
+
+            while True:
+                try:
+                    line = line_queue.get(timeout=1.0)
+                    if line is None:
+                        break
+                    last_output_time = time.time()
                     sys.stdout.write(line)
                     sys.stdout.flush()
                     out_file.write(line)
                     out_file.flush()
+                except queue.Empty:
+                    now = time.time()
+                    if timeout and timeout > 0 and (now - start_time >= timeout):
+                        msg = f"\n[!] Command exceeded total timeout ({int(timeout)}s). Terminating...\n"
+                        sys.stdout.write(msg)
+                        out_file.write(msg)
+                        _terminate_process(process)
+                        return 124
+                    if inactivity_timeout and inactivity_timeout > 0 and (now - last_output_time >= inactivity_timeout):
+                        msg = f"\n[!] Command produced no output for {int(inactivity_timeout)}s (stalled). Terminating...\n"
+                        sys.stdout.write(msg)
+                        out_file.write(msg)
+                        _terminate_process(process)
+                        return 124
 
             process.wait()
             return process.returncode if process.returncode is not None else 0
 
     except KeyboardInterrupt:
         print("\n\n[!] Interrupt signal received (Ctrl+C). Terminating subprocess safely...")
-        if process and process.poll() is None:
-            try:
-                process.terminate()
-                process.wait(timeout=3)
-            except Exception:
-                try:
-                    process.kill()
-                except Exception:
-                    pass
+        _terminate_process(process)
         print("[!] Subprocess stopped cleanly.")
         raise
 
@@ -78,6 +121,7 @@ def execute_task(
     model_name: str = DEFAULT_MODEL,
     max_retries: int = 2,
     interactive_on_failure: bool = True,
+    task_timeout: float = 1200.0,
 ) -> bool:
     """
     Execute a single task via `agy -p` with automatic retry/recovery in the same session.
@@ -100,8 +144,9 @@ Executing Task #{task_id}:
 Requirements:
 1. Check docs/ and assets/ if referenced in the task description.
 2. Apply code modifications directly to target files.
-3. Ensure all requirements are satisfied cleanly.
-4. Provide a concise summary of completed changes.
+3. If running tests or verification commands, always use non-interactive/headless mode and short timeouts so nothing hangs.
+4. Ensure all requirements are satisfied cleanly.
+5. Provide a concise summary of completed changes.
 """
 
     cmd = [
@@ -120,7 +165,7 @@ Requirements:
     print(f"{'-' * 70}\n")
 
     start_time = time.time()
-    return_code = run_stream_command(cmd, project_dir, log_file, append=False)
+    return_code = run_stream_command(cmd, project_dir, log_file, append=False, timeout=task_timeout)
 
     retries = 0
     while return_code != 0 and retries < max_retries:
@@ -129,9 +174,9 @@ Requirements:
         print(f"[>] Sending recovery prompt to session [{conversation_id}] (Attempt {retries}/{max_retries})...\n")
 
         recovery_prompt = (
-            f"An interruption or error (exit code: {return_code}) occurred while executing Task #{task_id}. "
-            f"Review the current code state, fix any issues, and complete the remaining requirements "
-            f"without reverting valid changes."
+            f"An interruption, timeout, or error (exit code: {return_code}) occurred while executing Task #{task_id}. "
+            f"Review the current code state, abort/fix any hanging test or blocking command (use short timeouts), "
+            f"and complete the remaining requirements without reverting valid changes."
         )
         recovery_model, _ = resolve_agy_model_and_effort(model_name, "high")
         recovery_cmd = [
@@ -144,7 +189,7 @@ Requirements:
             "--dangerously-skip-permissions",
         ]
 
-        return_code = run_stream_command(recovery_cmd, project_dir, log_file, append=True)
+        return_code = run_stream_command(recovery_cmd, project_dir, log_file, append=True, timeout=task_timeout)
 
     duration = round(time.time() - start_time, 2)
 
@@ -171,6 +216,7 @@ def run_tasks(
     auto_confirm: bool = False,
     interactive: bool = True,
     sleep_between_tasks: float = 2.0,
+    task_timeout: float = 1200.0,
 ) -> Dict[str, Any]:
     """
     Main Python API to execute Markdown tasks sequentially.
@@ -245,6 +291,7 @@ def run_tasks(
                 model_name=model,
                 max_retries=retries,
                 interactive_on_failure=interactive,
+                task_timeout=task_timeout,
             )
 
             if success:

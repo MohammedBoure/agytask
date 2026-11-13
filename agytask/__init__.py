@@ -19,19 +19,18 @@ from .runner import (
     execute_task,
     run_stream_command,
 )
-from .ui import (
-    launch_ui,
-    AntigravityTaskRunnerUI,
-)
 
 __version__ = "0.3.0"
 
 
 def __getattr__(name: str):
-    """Lazily load interactive worker functions to avoid circular imports."""
+    """Lazily load interactive worker and UI symbols to avoid circular or optional-GUI imports."""
     if name in ("run_interactive_pipeline", "run_interactive_task"):
         from . import interactive_worker
         return getattr(interactive_worker, name)
+    if name in ("launch_ui", "AntigravityTaskRunnerUI"):
+        from . import ui
+        return getattr(ui, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
