@@ -303,7 +303,7 @@ def build_single_line_task_prompt(task: Task, project_dir: Path, tasks_file_path
         f"Execute Task #{task_id}: {compact_body} | "
         f"Requirements: 1. Read relevant README.md and docs if referenced. "
         f"2. Apply the requested code modifications cleanly. "
-        f"3. If running tests or verification commands, always use non-interactive/headless mode and short timeouts so nothing hangs. "
+        f"3. If running tests or verification commands (e.g. pytest), always use non-interactive/headless mode, mock modal dialogs/app.exec(), and use short timeouts so nothing hangs. "
         f"4. Update Task #{task_id} header in {tasks_file_path.name} to [COMPLETED]. "
         f"5. Commit changes with Conventional Commits and provide a concise summary."
     )
@@ -441,7 +441,7 @@ def orchestrate_tasks_in_live_session(
     log_file: Path,
     auto_next_delay: float = 3.5,
     task_timeout: float = 1200.0,
-    inactivity_timeout: float = 300.0,
+    inactivity_timeout: float = 180.0,
 ) -> None:
     """
     Background orchestrator thread that injects tasks sequentially into the open `agy`
@@ -511,29 +511,23 @@ def orchestrate_tasks_in_live_session(
 
         quiescent_since: Optional[float] = None
         last_file_size = -1
-        last_log_size = log_file.stat().st_size if log_file.is_file() else 0
         task_started_at = time.time()
         last_activity_at = task_started_at
         recovery_sent = False
         timed_out = False
+        effective_inactivity = (
+            min(inactivity_timeout, task_timeout)
+            if (inactivity_timeout > 0 and task_timeout > 0)
+            else inactivity_timeout
+        )
 
         while proc.poll() is None:
             now = time.time()
 
-            # Track log file growth as a secondary activity signal.
-            if log_file.is_file():
-                try:
-                    cur_log_size = log_file.stat().st_size
-                    if cur_log_size != last_log_size:
-                        last_log_size = cur_log_size
-                        last_activity_at = now
-                except Exception:
-                    pass
-
             if not active_conv_id:
                 active_conv_id = detect_active_conversation_from_log(log_file, active_conv_id)
                 if not active_conv_id:
-                    if inactivity_timeout > 0 and (now - last_activity_at >= inactivity_timeout):
+                    if effective_inactivity > 0 and (now - last_activity_at >= effective_inactivity):
                         timed_out = True
                         break
                     time.sleep(1.0)
@@ -569,7 +563,7 @@ def orchestrate_tasks_in_live_session(
             # Watchdog: detect stalled tests/commands or exceeded total task timeout.
             idle_elapsed = now - last_activity_at
             total_elapsed = now - task_started_at
-            is_stalled = inactivity_timeout > 0 and idle_elapsed >= inactivity_timeout
+            is_stalled = effective_inactivity > 0 and idle_elapsed >= effective_inactivity
             is_over_budget = task_timeout > 0 and total_elapsed >= task_timeout
 
             if is_stalled or is_over_budget:
@@ -640,7 +634,7 @@ def run_interactive_pipeline(
     no_auto_next: bool = False,
     pause_at_end: bool = True,
     task_timeout: float = 1200.0,
-    inactivity_timeout: float = 300.0,
+    inactivity_timeout: float = 180.0,
 ) -> int:
     """
     Launch `agy` in live interactive mode and orchestrate pending tasks sequentially.
